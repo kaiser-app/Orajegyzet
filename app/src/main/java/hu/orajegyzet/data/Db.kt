@@ -230,7 +230,7 @@ interface GanttTaskDao {
         GanttTaskEntity::class
     ],
     version = 3,
-    exportSchema = false
+    exportSchema = true
 )
 @TypeConverters(Converters::class)
 abstract class Db : RoomDatabase() {
@@ -244,7 +244,6 @@ abstract class Db : RoomDatabase() {
         @Volatile private var inst: Db? = null
         fun get(ctx: Context): Db = inst ?: synchronized(this) {
             inst ?: Room.databaseBuilder(ctx.applicationContext, Db::class.java, "orajegyzet.db")
-                .fallbackToDestructiveMigration()
                 .build().also { inst = it }
         }
 

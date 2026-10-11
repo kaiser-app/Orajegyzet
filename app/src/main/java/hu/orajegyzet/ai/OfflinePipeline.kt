@@ -4,20 +4,30 @@ import android.content.Context
 import android.media.MediaCodec
 import android.media.MediaExtractor
 import android.media.MediaFormat
+import android.util.Log
 import com.google.mediapipe.tasks.genai.llminference.LlmInference
 import com.google.mediapipe.tasks.genai.llminference.LlmInferenceSession
 import com.redravencomputing.whispercore.Whisper
 import com.redravencomputing.whispercore.WhisperCpuConfig
 import com.redravencomputing.whispercore.WhisperDelegate
 import com.redravencomputing.whispercore.WhisperOperationError
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withTimeout
 import org.json.JSONObject
 import org.vosk.Model
 import org.vosk.Recognizer
-import java.io.ByteArrayOutputStream
 import java.io.File
+import java.io.FileInputStream
+import java.io.InputStream
 import java.io.RandomAccessFile
 import java.nio.ByteOrder
 import kotlin.coroutines.resume
@@ -32,8 +42,6 @@ import kotlin.coroutines.resumeWithException
  *       - tartalék: Vosk magyar modell (filesDir/models/vosk-hu).
  *  3. Összefoglaló: Gemma a MediaPipe LLM Inference API-val
  *     (filesDir/models/gemma.task — pl. Gemma 3 4B int4)
- *
- * A modellfájlok letöltését és helyét a README írja le.
  */
 class OfflinePipeline(
     private val ctx: Context,
@@ -42,8 +50,8 @@ class OfflinePipeline(
     private val keepWarm: Boolean = true,
     private val warmMinutes: Int = 5,
     private val summaryBlockChars: Int = 2000,
-    private val chunkSec: Int = 30,
-    private val overlapSec: Int = 2
+    private val chunkSec: Int = 27,
+    private val overlapSec: Int = 3
 ) : NotePipeline {
 
     override suspend fun process(audioPath: String, subject: String, dateLabel: String, isLesson: Boolean): NoteResult {
@@ -51,16 +59,15 @@ class OfflinePipeline(
         return finishSummary(transcript, subject, dateLabel, isLesson)
     }
 
-    /** Csak a leirat — a szakaszos megjelenítéshez (előbb a leirat, az összefoglaló utólag).
-     *  Az onPartial darabonként megkapja az eddigi leiratot (élő frissítéshez). */
+    /** Csak a leirat — a szakaszos megjelenítéshez (előbb a leirat, az összefoglaló utólag). */
     suspend fun transcribeOnly(audioPath: String, onPartial: (suspend (String) -> Unit)? = null): String =
         runTranscription(audioPath, onPartial)
 
-    /** Összefoglaló a kész leiratból (a worker hívja a szakaszos megjelenítéshez). */
+    /** Összefoglaló a kész leiratból. */
     suspend fun finishSummary(transcript: String, subject: String, dateLabel: String, isLesson: Boolean): NoteResult =
         buildOfflineResult(transcript)
 
-    /** Kivonatos alap (sosem hallucinál) + opcionális Gemma-átfogalmazás. */
+    /** Kivonatos alap (sosem hallucinál) + opcionális Gemma-átfogalmazás védőhálóval. */
     private fun buildOfflineResult(transcript: String): NoteResult {
         val clean = transcript.trim()
         if (clean.isBlank()) return NoteResult(transcript, "(Üres leirat.)", "", emptyList())
@@ -68,13 +75,64 @@ class OfflinePipeline(
         val notes = Extractive.bulletNotes(clean, 6)
         val keywords = Extractive.keywords(clean, 8)
         val gemmaFile = File(ctx.filesDir, "models/gemma.task")
-        val summary = if (useGemma && gemmaFile.exists() && extractive.isNotBlank()) {
+
+        val summary = if (useGemma && gemmaFile.exists() && extractive.isNotBlank() && clean.length >= 400 && countSentences(clean) >= 4) {
             System.gc()
-            // A Gemma a KIVONATOT fogalmazza át (rövid, valós mondatok) — kis hallucináció-esély.
-            runCatching { gemmaRephrase(gemmaFile, extractive) }
-                .getOrNull()?.takeIf { it.isNotBlank() } ?: extractive
+            val rawGemma = runCatching { gemmaRephrase(gemmaFile, extractive) }.getOrNull()
+            if (rawGemma != null) {
+                val processed = if (hasLoop(rawGemma)) removeLoopSentences(rawGemma) else rawGemma
+                if (!verifySourceCoherence(processed, clean)) {
+                    Log.w("Gemma", "elvetve: hallucináció (forrás-egyezés < 60%)")
+                    extractive
+                } else processed
+            } else extractive
         } else extractive
+
         return NoteResult(transcript, summary, notes, keywords)
+    }
+
+    /** Stílusgombok offline összefoglalója. */
+    fun gemmaStyle(instruction: String, transcript: String): String {
+        val clean = transcript.trim()
+        if (clean.isBlank()) return "(Üres leirat.)"
+        if (clean.length < 400 || countSentences(clean) < 4) {
+            return Extractive.summarize(clean, 6)
+        }
+        val gemmaFile = File(ctx.filesDir, "models/gemma.task")
+        if (!gemmaFile.exists()) {
+            return Extractive.summarize(clean, 6)
+        }
+
+        val n = countSentences(clean).coerceIn(2, 8)
+        val prompt = """
+            $instruction
+            Foglald össze magyarul, hivatalos, tárgyilagos stílusban, legfeljebb $n mondatban.
+            KIZÁRÓLAG az alábbi szövegben szereplő tényeket használd. Ha kevés az információ, írj rövidebbet.
+            Ne ismételj mondatot. Ne írj semmit a szövegen kívül.
+
+            Szöveg:
+            $clean
+        """.trimIndent()
+
+        val rawGemma = runCatching {
+            val options = LlmInference.LlmInferenceOptions.builder()
+                .setModelPath(gemmaFile.absolutePath)
+                .setMaxTokens(2048)
+                .build()
+            LlmInference.createFromOptions(ctx, options).use { llm ->
+                gemmaGenerate(llm, prompt)
+            }
+        }.getOrNull() ?: return Extractive.summarize(clean, 6)
+
+        val processed = if (hasLoop(rawGemma)) removeLoopSentences(rawGemma) else rawGemma
+        if (!verifySourceCoherence(processed, clean)) {
+            Log.w("Gemma", "elvetve: hallucináció (forrás-egyezés < 60%)")
+            return Extractive.summarize(clean, 6)
+        }
+        if (echoesPrompt(processed, instruction)) {
+            return "Az összefoglaló nem sikerült, próbáld újra."
+        }
+        return processed
     }
 
     private suspend fun runTranscription(audioPath: String, onPartial: (suspend (String) -> Unit)?): String {
@@ -103,14 +161,26 @@ class OfflinePipeline(
         }
     }
 
-    /** A nagy WAV-ot darabokban (chunkSec, átfedéssel) írja át — így a memória mindig
-     *  alacsony marad (bármilyen hosszú felvételnél), és a leirat darabonként épül. */
+    /** A nagy WAV-ot darabokban írja át csendvágással és átfedés-szűréssel. */
     private suspend fun transcribeChunked(bigWav: File, modelPath: String, onPartial: (suspend (String) -> Unit)?): String {
         val sr = 16_000
-        val chunkBytes = (chunkSec.coerceIn(5, 300)) * sr * 2
-        val overlapBytes = (overlapSec.coerceIn(0, 30)) * sr * 2
-        val sb = StringBuilder()
-        java.io.FileInputStream(bigWav).use { fis ->
+        val actualChunkSec = chunkSec.coerceIn(10, 28)
+        val actualOverlapSec = overlapSec.coerceIn(0, 5).coerceAtMost(30 - actualChunkSec)
+        val totalLenSec = bigWav.length() / (sr * 2)
+
+        // 25 másodperc alatti felvételnél egyetlen hívással írjuk át (nincs darabolás)
+        if (totalLenSec < 25L) {
+            val text = transcribeWhisper(bigWav, modelPath)
+            if (isWhisperHallucination(text)) return ""
+            onPartial?.invoke(text)
+            return text
+        }
+
+        val chunkBytes = actualChunkSec * sr * 2
+        val overlapBytes = actualOverlapSec * sr * 2
+        var currentText = ""
+
+        FileInputStream(bigWav).use { fis ->
             var skipped = 0L
             while (skipped < 44L) { val s = fis.skip(44L - skipped); if (s <= 0) break; skipped += s }
             var tail = ByteArray(0)
@@ -119,28 +189,28 @@ class OfflinePipeline(
                 val read = readFully(fis, buf)
                 if (read <= 0) break
                 val pcm = if (tail.isEmpty()) buf.copyOf(read) else tail + buf.copyOf(read)
+
                 val chunkWav = File(ctx.cacheDir, "chunk_${System.nanoTime()}.wav")
                 try {
                     writeWav(chunkWav, pcm, sampleRate = sr, channels = 1, bitsPerSample = 16)
                     val text = try { transcribeWhisper(chunkWav, modelPath) }
                         catch (e: Exception) { throw RuntimeException("[Whisper] ${e.message}", e) }
-                    if (text.isNotBlank()) {
-                        if (sb.isNotEmpty()) sb.append(' ')
-                        sb.append(text)
-                        onPartial?.invoke(sb.toString())
+
+                    if (text.isNotBlank() && !isWhisperHallucination(text)) {
+                        currentText = if (currentText.isEmpty()) text else mergeOverlap(currentText, text)
+                        onPartial?.invoke(currentText)
                     }
                 } finally {
                     chunkWav.delete()
                 }
                 tail = if (overlapBytes in 1 until read) buf.copyOfRange(read - overlapBytes, read) else ByteArray(0)
-                if (read < buf.size) break // utolsó (rövidebb) darab
+                if (read < buf.size) break
             }
         }
-        return sb.toString().trim()
+        return currentText.trim()
     }
 
-    /** Beolvas a pufferbe, amíg tele nem lesz vagy a fájl véget nem ér. */
-    private fun readFully(ins: java.io.InputStream, buf: ByteArray): Int {
+    private fun readFully(ins: InputStream, buf: ByteArray): Int {
         var off = 0
         while (off < buf.size) {
             val n = ins.read(buf, off, buf.size - off)
@@ -152,16 +222,12 @@ class OfflinePipeline(
 
     // ---------- 1a) STT (Whisper, large-v3-turbo) ----------
 
-    /** A callback-alapú WhisperCore API coroutine-híd. Ha a "melegen tartás" be van
-     *  kapcsolva, a betöltött modellt a feldolgozások közt megtartjuk (nem töltjük
-     *  újra a ~547 MB-ot), és csak inaktivitás után engedjük el. A Mutex egyúttal
-     *  egyszerre csak egy átírást enged (memóriavédelem). */
     private suspend fun transcribeWhisper(wav: File, modelPath: String): String {
         WhisperCpuConfig.override = whisperThreads.coerceIn(2, 8)
         return warmMutex.withLock {
             val whisper = acquireWhisper(modelPath)
             try {
-                kotlinx.coroutines.withTimeout(6 * 60_000L) {
+                withTimeout(6 * 60_000L) {
                     suspendCancellableCoroutine { cont ->
                         whisper.delegate = object : WhisperDelegate {
                             override fun didTranscribe(text: String) { if (cont.isActive) cont.resume(text.trim()) }
@@ -174,7 +240,7 @@ class OfflinePipeline(
                         whisper.transcribeAudioFile(wav)
                     }
                 }
-            } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+            } catch (e: TimeoutCancellationException) {
                 throw RuntimeException("átírás időtúllépés (a modell betöltése vagy a feldolgozás elakadt)", e)
             } finally {
                 if (keepWarm) scheduleRelease(warmMinutes) else releaseWarmNow()
@@ -190,7 +256,7 @@ class OfflinePipeline(
         runCatching { warmWhisper?.cleanup() }
         warmWhisper = null; warmModelPath = null
         val w = Whisper(ctx.applicationContext)
-        kotlinx.coroutines.withTimeout(6 * 60_000L) { w.initializeModel(modelPath) }
+        withTimeout(6 * 60_000L) { w.initializeModel(modelPath) }
         warmWhisper = w; warmModelPath = modelPath
         return w
     }
@@ -200,7 +266,7 @@ class OfflinePipeline(
     private fun scheduleRelease(mins: Int) {
         releaseJob?.cancel()
         releaseJob = warmScope.launch {
-            kotlinx.coroutines.delay(mins.coerceAtLeast(1) * 60_000L)
+            delay(mins.coerceAtLeast(1) * 60_000L)
             warmMutex.withLock {
                 runCatching { warmWhisper?.cleanup() }
                 warmWhisper = null; warmModelPath = null
@@ -213,19 +279,15 @@ class OfflinePipeline(
         warmWhisper = null; warmModelPath = null
     }
 
-    /** Offline újra-összefoglalás ugyanazzal a kivonatos logikával. */
     override suspend fun resummarize(transcript: String, subject: String, dateLabel: String, isLesson: Boolean): NoteResult =
         buildOfflineResult(transcript)
 
-    /** M4A (AAC) → 16 kHz mono 16-bit WAV, a meglévő MediaCodec dekóderrel. */
     private fun m4aToWav(srcPath: String, wavOut: File) {
-        // Streamelve írjuk a lemezre (nem tartjuk a teljes PCM-et a memóriában).
         RandomAccessFile(wavOut, "rw").use { f ->
             f.setLength(0)
             writeWavHeader(f, dataLen = 0, sampleRate = 16_000, channels = 1, bitsPerSample = 16)
             var dataLen = 0
             decodePcm16k(srcPath) { bytes, len -> f.write(bytes, 0, len); dataLen += len }
-            // a fejléc méret-mezőinek utólagos javítása
             f.seek(4); f.writeIntLE(36 + dataLen)
             f.seek(40); f.writeIntLE(dataLen)
         }
@@ -256,8 +318,6 @@ class OfflinePipeline(
         write(v and 0xff); write((v shr 8) and 0xff)
     }
 
-    // ---------- 1b) STT (Vosk, tartalék) ----------
-
     private fun transcribeVosk(audioPath: String, modelDir: File): String {
         val model = Model(modelDir.absolutePath)
         val rec = Recognizer(model, 16_000f)
@@ -272,7 +332,6 @@ class OfflinePipeline(
         return sb.toString().trim()
     }
 
-    /** M4A (AAC) → 16-bit PCM darabok. A felvétel eleve 16 kHz mono, így nincs újramintavételezés. */
     private fun decodePcm16k(path: String, onChunk: (ByteArray, Int) -> Unit) {
         val extractor = MediaExtractor().apply { setDataSource(path) }
         var trackFormat: MediaFormat? = null
@@ -290,7 +349,7 @@ class OfflinePipeline(
         var inputDone = false
         var outputDone = false
         var produced = 0L
-        val deadline = System.currentTimeMillis() + 120_000L // max 2 perc dekódolásra
+        val deadline = System.currentTimeMillis() + 120_000L
         try {
             while (!outputDone) {
                 if (System.currentTimeMillis() > deadline)
@@ -311,7 +370,7 @@ class OfflinePipeline(
                 }
                 when (val outIdx = codec.dequeueOutputBuffer(info, 10_000)) {
                     MediaCodec.INFO_TRY_AGAIN_LATER, MediaCodec.INFO_OUTPUT_FORMAT_CHANGED,
-                    MediaCodec.INFO_OUTPUT_BUFFERS_CHANGED -> { /* várunk tovább */ }
+                    MediaCodec.INFO_OUTPUT_BUFFERS_CHANGED -> { }
                     else -> if (outIdx >= 0) {
                         val out = codec.getOutputBuffer(outIdx)!!
                         if (info.size > 0) {
@@ -334,33 +393,31 @@ class OfflinePipeline(
         if (produced == 0L) error("A felvételből nem sikerült hangot kinyerni (üres dekódolás)")
     }
 
-    // ---------- 2) Összefoglaló (Gemma / MediaPipe) ----------
-
-    /** Opcionális: a kivonatot folyamatos prózává fogalmazza a Gemma (rövid, valós
-     *  mondatokból álló bemenet → kicsi a hallucináció esélye). Hiba esetén a hívó
-     *  visszaesik a tiszta kivonatra. */
     private fun gemmaRephrase(gemmaFile: File, extractive: String): String {
         val options = LlmInference.LlmInferenceOptions.builder()
             .setModelPath(gemmaFile.absolutePath)
             .setMaxTokens(2048)
             .build()
-        LlmInference.createFromOptions(ctx, options).use { llm ->
-            return gemmaGenerate(llm, """Fogalmazd át az alábbi, kulcsmondatokból álló vázlatot folyamatos, gördülékeny 8-10 mondatos magyar összefoglalóvá. KIZÁRÓLAG az alábbi mondatok tartalmát használd — ne tegyél hozzá új információt, ne találj ki semmit. Csak az összefoglalót add vissza.
+        val n = countSentences(extractive).coerceIn(2, 8)
+        val prompt = """
+            Foglald össze magyarul, hivatalos, tárgyilagos stílusban, legfeljebb $n mondatban.
+            KIZÁRÓLAG az alábbi szövegben szereplő tényeket használd. Ha kevés az információ, írj rövidebbet.
+            Ne ismételj mondatot. Ne írj semmit a szövegen kívül.
 
-Kulcsmondatok:
-$extractive""")
+            Szöveg:
+            $extractive
+        """.trimIndent()
+
+        LlmInference.createFromOptions(ctx, options).use { llm ->
+            return gemmaGenerate(llm, prompt)
         }
     }
 
-    /** Egy már betöltött Gemma modellen futtat egy promptot — chat-sablon +
-     *  session-mintavételezés (a mohó dekódolás ismétlésbe ragad a kis modellnél). */
     private fun gemmaGenerate(llm: LlmInference, instruction: String): String {
-        // Összefoglaláshoz a HŰSÉG a fontos: alacsony hőmérséklet (ne találjon ki),
-        // de enyhe topK/topP, hogy az alacsony hőmérséklet ellenére se ragadjon ismétlésbe.
         val sessionOptions = LlmInferenceSession.LlmInferenceSessionOptions.builder()
-            .setTopK(20)
-            .setTopP(0.9f)
-            .setTemperature(0.2f)
+            .setTopK(40)
+            .setTopP(0.95f)
+            .setTemperature(0.3f)
             .build()
         val session = LlmInferenceSession.createFromOptions(llm, sessionOptions)
         return try {
@@ -375,11 +432,85 @@ $extractive""")
 
     companion object {
         private const val MAX_TRANSCRIPT_CHARS = 24_000
-        private val warmMutex = kotlinx.coroutines.sync.Mutex()
-        private val warmScope = kotlinx.coroutines.CoroutineScope(
-            kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Default)
+        private val warmMutex = Mutex()
+        private val warmScope = CoroutineScope(
+            SupervisorJob() + Dispatchers.Default)
         private var warmWhisper: Whisper? = null
         private var warmModelPath: String? = null
-        private var releaseJob: kotlinx.coroutines.Job? = null
+        private var releaseJob: Job? = null
+
+        fun countSentences(text: String): Int =
+            text.split(Regex("(?<=[.!?])\\s+|\\n+")).map { it.trim() }.filter { it.length >= 15 }.size
+
+        fun hasLoop(text: String): Boolean {
+            val sents = text.split(Regex("(?<=[.!?])\\s+"))
+                .map { it.lowercase().replace(Regex("[^\\p{L}\\p{Nd} ]"), "").trim() }
+                .filter { it.length > 15 }
+            return sents.size != sents.toSet().size
+        }
+
+        fun removeLoopSentences(text: String): String {
+            val rawSents = text.split(Regex("(?<=[.!?])\\s+")).map { it.trim() }.filter { it.isNotBlank() }
+            val seen = mutableSetOf<String>()
+            val result = mutableListOf<String>()
+            for (s in rawSents) {
+                val norm = s.lowercase().replace(Regex("[^\\p{L}\\p{Nd} ]"), "").trim()
+                if (norm.length > 15) {
+                    if (seen.contains(norm)) break
+                    seen.add(norm)
+                }
+                result.add(s)
+            }
+            return result.joinToString(" ")
+        }
+
+        fun verifySourceCoherence(summaryText: String, sourceText: String): Boolean {
+            val wordRegex = Regex("[\\p{L}\\p{Nd}]+")
+            val sourceStems = wordRegex.findAll(sourceText)
+                .map { it.value.lowercase() }
+                .filter { it.length >= 4 && it !in Extractive.STOP }
+                .map { it.take(5) }
+                .toSet()
+            if (sourceStems.isEmpty()) return true
+
+            val summaryStems = wordRegex.findAll(summaryText)
+                .map { it.value.lowercase() }
+                .filter { it.length >= 4 && it !in Extractive.STOP }
+                .map { it.take(5) }
+                .toList()
+            if (summaryStems.isEmpty()) return true
+
+            val matches = summaryStems.count { it in sourceStems }
+            val ratio = matches.toDouble() / summaryStems.size.toDouble()
+            return ratio >= 0.60
+        }
+
+        fun echoesPrompt(result: String, prompt: String): Boolean {
+            val start = prompt.take(40).trim()
+            return start.isNotBlank() && result.contains(start, ignoreCase = true)
+        }
+
+        fun mergeOverlap(prev: String, next: String, maxWords: Int = 20): String {
+            val a = prev.trim().split(Regex("\\s+")).filter { it.isNotBlank() }
+            val b = next.trim().split(Regex("\\s+")).filter { it.isNotBlank() }
+            if (a.isEmpty()) return next.trim()
+            if (b.isEmpty()) return prev.trim()
+            fun norm(s: String) = s.lowercase().replace(Regex("[^\\p{L}\\p{Nd}]"), "")
+            for (k in minOf(maxWords, a.size, b.size) downTo 2) {
+                if ((0 until k).all { norm(a[a.size - k + it]) == norm(b[it]) }) {
+                    return (a + b.drop(k)).joinToString(" ")
+                }
+            }
+            return (a + b).joinToString(" ")
+        }
+
+        fun isWhisperHallucination(text: String): Boolean {
+            val clean = text.trim().lowercase()
+            val phrases = listOf(
+                "feliratozta", "köszönöm, hogy megnézték", "köszönöm a figyelmet",
+                "amara.org", "[zene]", "(zene)", "feliratok"
+            )
+            return phrases.any { clean.contains(it) }
+        }
     }
 }

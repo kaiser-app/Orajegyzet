@@ -8,6 +8,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -17,6 +18,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import hu.orajegyzet.ai.GeminiPipeline
 import hu.orajegyzet.bell.BellScheduler
 import hu.orajegyzet.data.*
 import hu.orajegyzet.work.DigestWorker
@@ -257,12 +259,28 @@ fun SettingsScreen(onBack: () -> Unit) {
         )
     }
 
-    Scaffold(topBar = {
-        TopAppBar(title = { Text("Beállítások") },
-            navigationIcon = { BackButton(onBack) })
-    }) { pad ->
+    val snackbarHostState = remember { SnackbarHostState() }
+
+    Scaffold(
+        topBar = {
+            TopAppBar(title = { Text("Beállítások") }, navigationIcon = { BackButton(onBack) })
+        },
+        snackbarHost = { SnackbarHost(snackbarHostState) }
+    ) { pad ->
         Box(Modifier.padding(pad).fillMaxSize(), contentAlignment = Alignment.TopCenter) {
         LazyColumn(Modifier.widthIn(max = 640.dp).fillMaxWidth().imePadding().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            if (s.secretsLost) {
+                item {
+                    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)) {
+                        Text(
+                            "⚠️ A tárolt API-kulcs nem olvasható, kérlek add meg újra.",
+                            modifier = Modifier.padding(12.dp),
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                }
+            }
             item {
                 SettingSection("Feldolgozás", expProc, { expProc = !expProc }) {
                     Text("Mód", fontWeight = FontWeight.Medium)
@@ -379,13 +397,18 @@ fun SettingsScreen(onBack: () -> Unit) {
                         )
                     }
                     Spacer(Modifier.height(4.dp))
-                    OutlinedTextField(
-                        value = s.geminiModel,
-                        onValueChange = { s = s.copy(geminiModel = it.trim()) },
-                        label = { Text("Modell") },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true
-                    )
+                    Text("Gemini Modell kiválasztása:", fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        GeminiPipeline.SUPPORTED_MODELS.forEach { m ->
+                            item {
+                                FilterChip(
+                                    selected = s.geminiModel == m,
+                                    onClick = { s = s.copy(geminiModel = m) },
+                                    label = { Text(m, maxLines = 1) }
+                                )
+                            }
+                        }
+                    }
                 }
             }
             item {
@@ -441,17 +464,21 @@ fun SettingsScreen(onBack: () -> Unit) {
                         }
                     }
                     Text("Magyarra a Whisper large-v3-turbo q5_0 modellt ajánljuk (README-link). " +
-                        "Töltsd le a telefon böngészőjével, majd importáld itt. adb nem szükséges.",
+                        "Gemma: Utasításra hangolt (-it) Gemma 3 .task modellt használj, pl. gemma3-1b-it-int4.task.",
                         color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
                 }
             }
             item {
                 Button(onClick = {
                     scope.launch {
-                        Settings.save(ctx, s)
-                        DigestWorker.schedule(ctx)
+                        try {
+                            Settings.save(ctx, s)
+                            DigestWorker.schedule(ctx)
+                            onBack()
+                        } catch (e: SecretStorageException) {
+                            snackbarHostState.showSnackbar("Az API-kulcsot nem sikerült biztonságosan elmenteni. Próbáld újra, vagy indítsd újra a telefont.")
+                        }
                     }
-                    onBack()
                 }, modifier = Modifier.fillMaxWidth()) { Text("Mentés") }
             }
             item {

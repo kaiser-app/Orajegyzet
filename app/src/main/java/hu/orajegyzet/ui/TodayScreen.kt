@@ -30,6 +30,7 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.FileProvider
 import hu.orajegyzet.ai.Extractive
 import hu.orajegyzet.ai.GeminiPipeline
+import hu.orajegyzet.ai.OfflinePipeline
 import hu.orajegyzet.data.*
 import hu.orajegyzet.rec.RecordingService
 import hu.orajegyzet.work.ProcessingWorker
@@ -267,7 +268,7 @@ fun TodayScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Fülelő", fontSize = 12.sp, color = MaterialTheme.colorScheme.primary) },
+                title = {},
                 actions = {
                     TextButton(onClick = onOpenAssistant) { Text("Projekt AI", maxLines = 1) }
                     TextButton(onClick = onOpenHistory) { Text("Korábbi", maxLines = 1) }
@@ -285,45 +286,16 @@ fun TodayScreen(
             }
         }
     ) { pad ->
-        Row(
+        Box(
             modifier = Modifier
                 .padding(pad)
-                .fillMaxSize()
+                .fillMaxSize(),
+            contentAlignment = Alignment.TopCenter
         ) {
-            // --- BAL OLDALI FÜGGŐLEGES FÜLELŐ SÁV (a felhasználó által pirossal jelölt terület) ---
-            Column(
-                modifier = Modifier
-                    .width(32.dp)
-                    .fillMaxHeight()
-                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f))
-                    .padding(vertical = 12.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Top
+            LazyColumn(
+                Modifier.widthIn(max = 640.dp).fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Text("🎙️", fontSize = 12.sp)
-                Spacer(Modifier.height(8.dp))
-                "FÜLELŐ".forEach { char ->
-                    Text(
-                        text = char.toString(),
-                        fontWeight = FontWeight.Black,
-                        fontSize = 11.sp,
-                        lineHeight = 13.sp,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                }
-            }
-
-            // --- TARTALMI RÉSZ (JOBB OLDAL) ---
-            Box(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxHeight(),
-                contentAlignment = Alignment.TopCenter
-            ) {
-                LazyColumn(
-                    Modifier.widthIn(max = 640.dp).fillMaxWidth().padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
                     // --- AKCIÓ SÁV & KÜLSŐ HANG IMPORTÁLÁSA ---
                     item {
                         Row(
@@ -439,16 +411,25 @@ fun TodayScreen(
                     items(notes.filter { it.status == NoteStatus.DONE }) { n ->
                         Card(onClick = { onOpenNote(n.id) }) {
                             Column(Modifier.fillMaxWidth().padding(12.dp)) {
-                                Column(Modifier.fillMaxWidth()) {
-                                    Text(n.subject, fontWeight = FontWeight.Bold, fontSize = 15.sp)
-                                    if (n.docCode.isNotBlank()) {
-                                        Spacer(Modifier.height(2.dp))
-                                        Text(
-                                            n.docCode,
-                                            fontSize = 12.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            color = MaterialTheme.colorScheme.primary
-                                        )
+                                Row(
+                                    Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(Modifier.weight(1f)) {
+                                        Text(n.subject, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                                        if (n.docCode.isNotBlank()) {
+                                            Spacer(Modifier.height(2.dp))
+                                            Text(
+                                                n.docCode,
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = MaterialTheme.colorScheme.primary
+                                            )
+                                        }
+                                    }
+                                    IconButton(onClick = { onOpenNote(n.id) }) {
+                                        Text("✏️", fontSize = 18.sp)
                                     }
                                 }
                                 Spacer(Modifier.height(4.dp))
@@ -461,7 +442,6 @@ fun TodayScreen(
             }
         }
     }
-}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -545,21 +525,54 @@ fun NoteDetailScreen(noteId: Long, onBack: () -> Unit) {
             try {
                 val s = Settings.get(ctx)
                 val sourceText = n.transcript.ifBlank { n.summary }
-                val prompt = when (type) {
-                    "Vezetői" -> "Készíts szigorúan vezetői összefoglalót (lényeg, fő döntések, stratégia) az alábbi szövegből:\n\n$sourceText"
-                    "Jegyzőkönyv" -> "Készíts hivatalos jegyzőkönyvet (jelenlévők, napirend, elhangzottak, határozatok) az alábbi szövegből:\n\n$sourceText"
-                    "Teendők" -> "Gyűjtsd össze az összes elhangzott teendőt, akciótervet és felelőst bullet-point listában:\n\n$sourceText"
-                    else -> "Készíts strukturált tanulmányi jegyzetet fogalmakkal és példákkal:\n\n$sourceText"
+                val gemmaFile = File(ctx.filesDir, "models/gemma.task")
+
+                val isOnlineAvailable = s.geminiApiKey.isNotBlank()
+                val isGemmaAvailable = s.useGemma && gemmaFile.exists()
+
+                if (!isOnlineAvailable && !isGemmaAvailable && (type == "Jegyzőkönyv" || type == "Teendők")) {
+                    alertMessage = "Ehhez Gemini API-kulcs vagy telepített Gemma modell szükséges."
+                    customSummaryResult = null
+                    return@launch
                 }
 
-                val resultText = if (s.geminiApiKey.isNotBlank()) {
-                    val pipeline = GeminiPipeline(s.geminiApiKey, s.geminiModel)
-                    pipeline.resummarize(prompt, n.subject, n.dateIso, false).summary
+                val promptInstruction = when (type) {
+                    "Vezetői" -> "Készíts asszertív hivatali és vezetői stílusú, határozott összefoglalót (fő döntések, stratégia, kötelezettségek)."
+                    "Jegyzőkönyv" -> "Készíts szigorúan asszertív hivatali jegyzőkönyvet (napirend, elhangzottak, hivatalos határozatok és felelősök)."
+                    "Teendők" -> "Gyűjtsd össze az összes elhangzott teendőt, akciótervet és felelőst határozott hivatali formátumban."
+                    else -> "Készíts strukturált, asszertív hivatali hangvételű jegyzetet és összefoglalót."
+                }
+
+                val resultText = when {
+                    isOnlineAvailable -> {
+                        val fullPrompt = "$promptInstruction\n\nSzöveg:\n$sourceText"
+                        val pipeline = GeminiPipeline(s.geminiApiKey, s.geminiModel)
+                        pipeline.resummarize(fullPrompt, n.subject, n.dateIso, false).summary
+                    }
+                    isGemmaAvailable -> {
+                        val offlinePipeline = OfflinePipeline(
+                            ctx,
+                            useGemma = true,
+                            whisperThreads = s.whisperThreads,
+                            keepWarm = s.keepModelWarm,
+                            warmMinutes = s.warmMinutes,
+                            summaryBlockChars = s.summaryBlockChars,
+                            chunkSec = s.whisperChunkSec,
+                            overlapSec = s.whisperOverlapSec
+                        )
+                        offlinePipeline.gemmaStyle(promptInstruction, sourceText)
+                    }
+                    else -> {
+                        selectedCustomPrompt = "$type — Kivonat (AI nélkül)"
+                        Extractive.summarize(sourceText, 6)
+                    }
+                }
+
+                if (OfflinePipeline.echoesPrompt(resultText, promptInstruction)) {
+                    customSummaryResult = "Az összefoglaló nem sikerült, próbáld újra."
                 } else {
-                    Extractive.summarize(prompt, 6)
+                    customSummaryResult = resultText
                 }
-
-                customSummaryResult = resultText
             } catch (e: Exception) {
                 customSummaryResult = "Hiba: ${e.message}"
             } finally {

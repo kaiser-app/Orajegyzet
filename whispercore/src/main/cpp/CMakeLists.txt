@@ -4,6 +4,9 @@ cmake_minimum_required(VERSION 3.18.1)
 # Project name (optional, but good practice)
 project(WhisperAndroidLib C CXX)
 
+# --- 16 KB Page Alignment Linker Flags for Android 15+ ---
+add_link_options("-Wl,-z,max-page-size=16384" "-Wl,-z,common-page-size=16384")
+
 # --- Add the whisper_core library ---
 # This tells CMake to look into the 'whisper_core' directory
 # and process its CMakeLists.txt.

@@ -63,6 +63,12 @@ class DigestWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx
             put("mail.smtp.port", port.toString())
             put("mail.smtp.auth", "true")
             put("mail.smtp.starttls.enable", "true")
+            put("mail.smtp.starttls.required", "true")
+            if (port == 465) {
+                put("mail.smtp.ssl.enable", "true")
+                put("mail.smtp.socketFactory.port", "465")
+                put("mail.smtp.socketFactory.class", "javax.net.ssl.SSLSocketFactory")
+            }
         }
         val session = Session.getInstance(props, object : Authenticator() {
             override fun getPasswordAuthentication() = PasswordAuthentication(user, pass)

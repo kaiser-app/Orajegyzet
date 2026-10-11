@@ -1,6 +1,7 @@
 package hu.orajegyzet.rec
 
 import android.app.Notification
+import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
@@ -13,6 +14,7 @@ import android.os.IBinder
 import android.os.Looper
 import hu.orajegyzet.App
 import hu.orajegyzet.MainActivity
+import hu.orajegyzet.R
 import hu.orajegyzet.data.Db
 import hu.orajegyzet.data.Note
 import hu.orajegyzet.data.NoteCodeGenerator
@@ -23,7 +25,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.time.LocalDate
 import java.time.LocalTime
@@ -48,12 +50,24 @@ class RecordingService : Service() {
         when (intent?.action) {
             ACTION_STOP -> { stopAndProcess(); return START_NOT_STICKY }
             ACTION_START -> {
+                if (isStarting || isRecordingActive || recorder != null) {
+                    return START_NOT_STICKY
+                }
                 val lessonId = intent.getLongExtra("lessonId", -1).takeIf { it >= 0 }
                 val title = intent.getStringExtra("title")
                 val projectId = intent.getStringExtra("projectId")
                 val docType = intent.getStringExtra("docType") ?: "JEG"
                 val projectCode = intent.getStringExtra("projectCode")
-                if (recorder == null) startRecording(lessonId, title, projectId, docType, projectCode)
+
+                // 1. Azonnali startForeground, hogy elkerüljük az ANR-t és a ForegroundServiceDidNotStartInTimeException-t
+                val initialNotif = buildNotification("Felvétel indítása…")
+                if (Build.VERSION.SDK_INT >= 30) {
+                    startForeground(NOTIF_ID, initialNotif, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
+                } else {
+                    startForeground(NOTIF_ID, initialNotif)
+                }
+
+                startRecording(lessonId, title, projectId, docType, projectCode)
             }
         }
         return START_NOT_STICKY
@@ -66,70 +80,82 @@ class RecordingService : Service() {
         docType: String = "JEG",
         projectCode: String? = null
     ) {
-        val db = Db.get(this)
-        val now = LocalTime.now()
-        val nowMin = now.hour * 60 + now.minute
-        val todayStr = LocalDate.now().toString()
+        isStarting = true
+        scope.launch(Dispatchers.IO) {
+            try {
+                val db = Db.get(this@RecordingService)
+                val now = LocalTime.now()
+                val nowMin = now.hour * 60 + now.minute
+                val todayStr = LocalDate.now().toString()
 
-        // jegyzet-sor létrehozása (fejléc: dátum + időpont + tantárgy/téma)
-        val (subject, endMin) = runBlocking {
-            val l = lessonId?.let { db.lessonDao().byId(it) }
-            (title?.takeIf { it.isNotBlank() } ?: l?.subject ?: "Felvétel") to
-                (l?.endMin ?: (nowMin + DEFAULT_MAX_MIN))
-        }
+                val l = lessonId?.let { db.lessonDao().byId(it) }
+                val subject = (title?.takeIf { it.isNotBlank() } ?: l?.subject ?: "Felvétel")
+                val endMin = l?.endMin ?: (nowMin + DEFAULT_MAX_MIN)
 
-        val docCode = runBlocking {
-            val existingToday = db.noteDao().allOnDate(todayStr)
-            NoteCodeGenerator.generate(
-                projectCode = projectCode ?: projectId,
-                subject = subject,
-                docType = docType,
-                date = LocalDate.now(),
-                sequence = existingToday.size + 1
-            )
-        }
-
-        val file = File(filesDir, "rec_${System.currentTimeMillis()}.m4a")
-        isRecordingActive = true
-        recordingStartMillis = System.currentTimeMillis()
-
-        noteId = runBlocking {
-            db.noteDao().insert(
-                Note(
-                    lessonId = lessonId,
-                    projectId = projectId,
-                    docCode = docCode,
-                    docType = docType,
+                val existingToday = db.noteDao().allOnDate(todayStr)
+                val docCode = NoteCodeGenerator.generate(
+                    projectCode = projectCode ?: projectId,
                     subject = subject,
-                    dateIso = todayStr,
-                    startMin = nowMin, endMin = endMin,
-                    status = NoteStatus.RECORDING, audioPath = file.absolutePath
+                    docType = docType,
+                    date = LocalDate.now(),
+                    sequence = existingToday.size + 1
                 )
-            )
-        }
 
-        recorder = (if (Build.VERSION.SDK_INT >= 31) MediaRecorder(this) else @Suppress("DEPRECATION") MediaRecorder()).apply {
-            setAudioSource(MediaRecorder.AudioSource.MIC)
-            setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
-            setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
-            setAudioSamplingRate(16_000)
-            setAudioChannels(1)
-            setAudioEncodingBitRate(64_000)
-            setOutputFile(file.absolutePath)
-            prepare()
-            start()
-        }
+                val file = File(filesDir, "rec_${System.currentTimeMillis()}.m4a")
 
-        val notif = buildNotification(subject)
-        if (Build.VERSION.SDK_INT >= 30) {
-            startForeground(NOTIF_ID, notif, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
-        } else {
-            startForeground(NOTIF_ID, notif)
-        }
+                val newNoteId = db.noteDao().insert(
+                    Note(
+                        lessonId = lessonId,
+                        projectId = projectId,
+                        docCode = docCode,
+                        docType = docType,
+                        subject = subject,
+                        dateIso = todayStr,
+                        startMin = nowMin, endMin = endMin,
+                        status = NoteStatus.RECORDING, audioPath = file.absolutePath
+                    )
+                )
 
-        // biztonsági leállítás: az óra vége + 2 perc, de max 90 perc
-        val remainingMin = ((endMin - nowMin).coerceIn(1, 90)) + 2
-        handler.postDelayed(safetyStop, remainingMin * 60_000L)
+                withContext(Dispatchers.Main) {
+                    noteId = newNoteId
+                    isRecordingActive = true
+                    recordingStartMillis = System.currentTimeMillis()
+
+                    val mr = (if (Build.VERSION.SDK_INT >= 31) MediaRecorder(this@RecordingService) else @Suppress("DEPRECATION") MediaRecorder()).apply {
+                        setAudioSource(MediaRecorder.AudioSource.MIC)
+                        setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+                        setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+                        setAudioSamplingRate(16_000)
+                        setAudioChannels(1)
+                        setAudioEncodingBitRate(64_000)
+                        setOutputFile(file.absolutePath)
+                        prepare()
+                        start()
+                    }
+                    recorder = mr
+
+                    val notif = buildNotification(subject)
+                    val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
+                    nm.notify(NOTIF_ID, notif)
+
+                    val remainingMin = ((endMin - nowMin).coerceIn(1, 90)) + 2
+                    handler.postDelayed(safetyStop, remainingMin * 60_000L)
+                }
+            } catch (e: Exception) {
+                isRecordingActive = false
+                val idToFail = noteId
+                if (idToFail >= 0) {
+                    (applicationContext as App).appScope.launch {
+                        val dao = Db.get(this@RecordingService).noteDao()
+                        dao.byId(idToFail)?.let { dao.update(it.copy(status = NoteStatus.ERROR, error = "Mikrofon indítási hiba: ${e.message}")) }
+                    }
+                }
+                stopForeground(STOP_FOREGROUND_REMOVE)
+                stopSelf()
+            } finally {
+                isStarting = false
+            }
+        }
     }
 
     private fun buildNotification(subject: String): Notification {
@@ -142,7 +168,7 @@ class RecordingService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
         return Notification.Builder(this, App.CH_REC)
-            .setSmallIcon(hu.orajegyzet.R.drawable.ic_stat_note)
+            .setSmallIcon(R.drawable.ic_stat_note)
             .setContentTitle("Felvétel: $subject")
             .setContentText("Kicsengetéskor automatikusan leáll")
             .setContentIntent(openPi)
@@ -152,6 +178,7 @@ class RecordingService : Service() {
     }
 
     private fun stopAndProcess() {
+        val active = isRecordingActive
         isRecordingActive = false
         handler.removeCallbacks(safetyStop)
         try { recorder?.stop() } catch (_: Exception) {}
@@ -159,11 +186,8 @@ class RecordingService : Service() {
         val id = noteId
         noteId = -1
         val ctx: Context = applicationContext
-        // A DB-frissítést az alkalmazás-szintű scope-on végezzük, hogy a stopSelf()
-        // ne szakítsa félbe, mielőtt a státusz QUEUED-re vált (különben a felvétel
-        // "felvétel" állapotban ragadna és a gomb nem váltana vissza).
         (applicationContext as App).appScope.launch {
-            if (id >= 0) {
+            if (id >= 0 && active) {
                 val dao = Db.get(ctx).noteDao()
                 dao.byId(id)?.let { dao.update(it.copy(status = NoteStatus.QUEUED)) }
                 ProcessingWorker.enqueue(ctx, id)
@@ -174,8 +198,12 @@ class RecordingService : Service() {
     }
 
     override fun onDestroy() {
-        try { recorder?.stop() } catch (_: Exception) {}
-        recorder?.release(); recorder = null
+        if (isRecordingActive) {
+            stopAndProcess()
+        } else {
+            try { recorder?.stop() } catch (_: Exception) {}
+            recorder?.release(); recorder = null
+        }
         scope.cancel()
         super.onDestroy()
     }
@@ -186,6 +214,7 @@ class RecordingService : Service() {
         const val NOTIF_ID = 42
         const val DEFAULT_MAX_MIN = 45
 
+        @Volatile var isStarting = false
         @Volatile var isRecordingActive = false
         @Volatile var recordingStartMillis: Long = 0
 

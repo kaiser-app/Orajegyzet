@@ -11,6 +11,13 @@ import org.json.JSONObject
 import java.io.File
 import java.util.concurrent.TimeUnit
 
+class GeminiHttpException(
+    val code: Int,
+    message: String,
+    val isInvalidKey: Boolean = false,
+    val rawBody: String = ""
+) : RuntimeException(message)
+
 /**
  * Online mód: a hangfájl a Gemini Files API-ra kerül, megvárja az ACTIVE állapotot,
  * majd egyetlen generateContent hívás készíti el a leiratot + jegyzetet + összefoglalót.
@@ -18,10 +25,18 @@ import java.util.concurrent.TimeUnit
  */
 class GeminiPipeline(
     private val apiKey: String,
-    private val model: String = "gemini-3.1-flash-lite"
+    private val model: String = "gemini-3.1-flash-lite",
+    private val baseUrl: String = BASE
 ) : NotePipeline {
 
     private val http = OkHttpClient.Builder()
+        .addInterceptor { chain ->
+            chain.proceed(
+                chain.request().newBuilder()
+                    .header("x-goog-api-key", apiKey.trim())
+                    .build()
+            )
+        }
         .connectTimeout(60, TimeUnit.SECONDS)
         .readTimeout(10, TimeUnit.MINUTES)
         .writeTimeout(10, TimeUnit.MINUTES)
@@ -30,19 +45,37 @@ class GeminiPipeline(
     override suspend fun process(audioPath: String, subject: String, dateLabel: String, isLesson: Boolean): NoteResult {
         validateApiKey()
         val file = File(audioPath)
-        // 15 MB alatti fájlnál közvetlen inline Base64-gyel hívjuk meg (gyorsabb és nincs Files API dependencia)
-        val raw = if (file.length() in 1..(15 * 1024 * 1024L)) {
-            generateInlineWithFallback(file, isLesson)
-        } else {
-            val fileUri = uploadFile(file)
+        val raw = if (file.length() in 1..INLINE_MAX_BYTES) {
             try {
-                waitForFileActive(fileUri)
-                generateWithFallback(fileUri, isLesson)
-            } finally {
-                runCatching { deleteRemote(fileUri) }
+                generateInlineWithFallback(file, isLesson)
+            } catch (e: GeminiHttpException) {
+                if (!isPayloadTooLarge(e)) throw e
+                generateViaUpload(file, isLesson)
             }
+        } else {
+            generateViaUpload(file, isLesson)
         }
         return parseModelJson(raw)
+    }
+
+    private fun isPayloadTooLarge(e: GeminiHttpException): Boolean {
+        if (e.isInvalidKey || e.code == 401 || e.code == 403) return false
+        return e.code == 413 ||
+            (e.code == 400 && e.rawBody.let {
+                it.contains("size", ignoreCase = true) ||
+                it.contains("too large", ignoreCase = true) ||
+                it.contains("exceeds", ignoreCase = true)
+            })
+    }
+
+    private fun generateViaUpload(file: File, isLesson: Boolean): String {
+        val fileUri = uploadFile(file)
+        return try {
+            waitForFileActive(fileUri)
+            generateWithFallback(fileUri, isLesson)
+        } finally {
+            runCatching { deleteRemote(fileUri) }
+        }
     }
 
     private fun validateApiKey() {
@@ -52,12 +85,21 @@ class GeminiPipeline(
         }
     }
 
+    private fun modelsToTry(): List<String> = (listOf(model) + SUPPORTED_MODELS).distinct()
+
+    private fun encodeBase64(bytes: ByteArray): String {
+        return try {
+            Base64.encodeToString(bytes, Base64.NO_WRAP)
+        } catch (_: Throwable) {
+            java.util.Base64.getEncoder().encodeToString(bytes)
+        }
+    }
+
     private fun generateInlineWithFallback(file: File, isLesson: Boolean): String {
-        val modelsToTry = listOf(model, "gemini-3.1-flash-lite", "gemini-3.5-flash-lite", "gemini-3.5-flash", "gemini-3.6-flash", "gemini-3.7-flash").distinct()
-        val b64 = Base64.encodeToString(file.readBytes(), Base64.NO_WRAP)
+        val b64 = encodeBase64(file.readBytes())
         var lastError: Exception? = null
 
-        for (m in modelsToTry) {
+        for (m in modelsToTry()) {
             try {
                 val parts = JSONArray()
                 parts.put(JSONObject().put("inlineData", JSONObject().put("mimeType", "audio/mp4").put("data", b64)))
@@ -76,7 +118,7 @@ class GeminiPipeline(
                 body.put("generationConfig", JSONObject().put("responseMimeType", "application/json"))
 
                 val req = Request.Builder()
-                    .url("$BASE/v1beta/models/$m:generateContent?key=$apiKey")
+                    .url("$baseUrl/v1beta/models/$m:generateContent")
                     .post(body.toString().toRequestBody("application/json".toMediaType()))
                     .build()
 
@@ -87,11 +129,12 @@ class GeminiPipeline(
                     }
                     parseCandidateText(text)
                 }
+            } catch (e: GeminiHttpException) {
+                lastError = e
+                if (e.code == 404) continue
+                throw e
             } catch (e: Exception) {
                 lastError = e
-                if (e.message?.contains("404") == true || e.message?.contains("nem érhető el") == true) {
-                    continue
-                }
                 throw e
             }
         }
@@ -104,16 +147,16 @@ class GeminiPipeline(
     }
 
     private fun generateWithFallback(fileUri: String, isLesson: Boolean): String {
-        val modelsToTry = listOf(model, "gemini-3.1-flash-lite", "gemini-3.5-flash-lite", "gemini-3.5-flash", "gemini-3.6-flash", "gemini-3.7-flash").distinct()
         var lastError: Exception? = null
-        for (m in modelsToTry) {
+        for (m in modelsToTry()) {
             try {
                 return generate(fileUri, isLesson, m)
+            } catch (e: GeminiHttpException) {
+                lastError = e
+                if (e.code == 404) continue
+                throw e
             } catch (e: Exception) {
                 lastError = e
-                if (e.message?.contains("404") == true || e.message?.contains("nem érhető el") == true) {
-                    continue
-                }
                 throw e
             }
         }
@@ -121,16 +164,16 @@ class GeminiPipeline(
     }
 
     private fun generateFromTextWithFallback(transcript: String, isLesson: Boolean): String {
-        val modelsToTry = listOf(model, "gemini-3.1-flash-lite", "gemini-3.5-flash-lite", "gemini-3.5-flash", "gemini-3.6-flash", "gemini-3.7-flash").distinct()
         var lastError: Exception? = null
-        for (m in modelsToTry) {
+        for (m in modelsToTry()) {
             try {
                 return generateFromText(transcript, isLesson, m)
+            } catch (e: GeminiHttpException) {
+                lastError = e
+                if (e.code == 404) continue
+                throw e
             } catch (e: Exception) {
                 lastError = e
-                if (e.message?.contains("404") == true || e.message?.contains("nem érhető el") == true) {
-                    continue
-                }
                 throw e
             }
         }
@@ -149,7 +192,7 @@ class GeminiPipeline(
             .put("generationConfig", JSONObject().put("responseMimeType", "application/json"))
 
         val req = Request.Builder()
-            .url("$BASE/v1beta/models/$targetModel:generateContent?key=$apiKey")
+            .url("$baseUrl/v1beta/models/$targetModel:generateContent")
             .post(body.toString().toRequestBody("application/json".toMediaType()))
             .build()
 
@@ -166,7 +209,7 @@ class GeminiPipeline(
     private fun uploadFile(file: File): String {
         val meta = JSONObject().put("file", JSONObject().put("display_name", file.name))
         val startReq = Request.Builder()
-            .url("$BASE/upload/v1beta/files?key=$apiKey")
+            .url("$baseUrl/upload/v1beta/files")
             .header("X-Goog-Upload-Protocol", "resumable")
             .header("X-Goog-Upload-Command", "start")
             .header("X-Goog-Upload-Header-Content-Length", file.length().toString())
@@ -202,7 +245,7 @@ class GeminiPipeline(
     private fun waitForFileActive(fileUri: String) {
         val id = fileUri.substringAfter("/files/")
         val req = Request.Builder()
-            .url("$BASE/v1beta/files/$id?key=$apiKey")
+            .url("$baseUrl/v1beta/files/$id")
             .get()
             .build()
 
@@ -236,7 +279,7 @@ class GeminiPipeline(
             .put("generationConfig", JSONObject().put("responseMimeType", "application/json"))
 
         val req = Request.Builder()
-            .url("$BASE/v1beta/models/$targetModel:generateContent?key=$apiKey")
+            .url("$baseUrl/v1beta/models/$targetModel:generateContent")
             .post(body.toString().toRequestBody("application/json".toMediaType()))
             .build()
 
@@ -265,23 +308,39 @@ class GeminiPipeline(
     private fun deleteRemote(fileUri: String) {
         val id = fileUri.substringAfter("/files/")
         val req = Request.Builder()
-            .url("$BASE/v1beta/files/$id?key=$apiKey")
+            .url("$baseUrl/v1beta/files/$id")
             .delete()
             .build()
         runCatching { http.newCall(req).execute().close() }
     }
 
-    private fun errorForHttpCode(code: Int, bodyText: String, action: String, targetModel: String = model): Exception {
-        val msg = when (code) {
-            400, 401, 403 -> "Gemini API-kulcs / engedély hiba ($code). Ellenőrizd az API-kulcsot a Beállításokban!"
-            404 -> "Gemini modell hiba ($code). A megadott modell ($targetModel) nem érhető el."
-            429 -> "Gemini API kvóta túllépés ($code). Próbáld újra kicsit később!"
-            else -> "$action hiba ($code): $bodyText"
+    private fun errorForHttpCode(code: Int, bodyText: String, action: String, targetModel: String = model): GeminiHttpException {
+        val invalidKey = isInvalidKey(code, bodyText)
+        val shortBody = if (bodyText.length > 300) bodyText.take(300) + "…" else bodyText
+        val msg = when {
+            code == 401 || code == 403 || invalidKey ->
+                "Gemini API-kulcs / engedély hiba ($code). Ellenőrizd az API-kulcsot a Beállításokban!"
+            code == 400 -> "Gemini kérés hiba ($code): $shortBody"
+            code == 404 -> "Gemini modell hiba ($code). A megadott modell ($targetModel) nem érhető el."
+            code == 429 -> "Gemini API kvóta túllépés ($code). Próbáld újra kicsit később!"
+            else        -> "$action hiba ($code): $shortBody"
         }
-        return RuntimeException(msg)
+        return GeminiHttpException(code, msg, isInvalidKey = invalidKey, rawBody = bodyText)
     }
+
+    private fun isInvalidKey(code: Int, body: String) =
+        code == 400 && (body.contains("API_KEY_INVALID") ||
+                        body.contains("API key not valid", ignoreCase = true))
 
     companion object {
         private const val BASE = "https://generativelanguage.googleapis.com"
+        private const val INLINE_MAX_BYTES = 10L * 1024 * 1024
+        val SUPPORTED_MODELS = listOf(
+            "gemini-3.1-flash-lite",
+            "gemini-3.5-flash-lite",
+            "gemini-3.5-flash",
+            "gemini-3.6-flash",
+            "gemini-3.7-flash"
+        )
     }
 }

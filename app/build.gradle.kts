@@ -1,3 +1,5 @@
+import com.android.build.gradle.internal.api.BaseVariantOutputImpl
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -13,23 +15,85 @@ android {
         applicationId = "hu.orajegyzet"
         minSdk = 26
         targetSdk = 36
-        versionCode = 2
-        versionName = "1.0.0"
+        versionCode = 5
+        versionName = "1.0.3"
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        ndk { abiFilters.clear(); abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
     }
-    buildTypes {
-        release {
-            isMinifyEnabled = false
+
+    signingConfigs {
+        create("release") {
+            val p = project.properties
+            val ksPath = (p["ORAJEGYZET_KEYSTORE"] as String?) ?: System.getenv("ORAJEGYZET_KEYSTORE") ?: "release.jks"
+            val ksFile = file(ksPath)
+            if (ksFile.exists()) {
+                storeFile = ksFile
+                storePassword = (p["ORAJEGYZET_KS_PASS"] as String?) ?: System.getenv("ORAJEGYZET_KS_PASS") ?: "orajegyzet_pass"
+                keyAlias = (p["ORAJEGYZET_KEY_ALIAS"] as String?) ?: System.getenv("ORAJEGYZET_KEY_ALIAS") ?: "orajegyzet_alias"
+                keyPassword = (p["ORAJEGYZET_KEY_PASS"] as String?) ?: System.getenv("ORAJEGYZET_KEY_PASS") ?: "orajegyzet_pass"
+            } else {
+                storeFile = getByName("debug").storeFile
+                storePassword = getByName("debug").storePassword
+                keyAlias = getByName("debug").keyAlias
+                keyPassword = getByName("debug").keyPassword
+            }
         }
     }
+
+    buildTypes {
+        debug {
+            ndk { abiFilters += "x86_64" }
+        }
+        release {
+            isDebuggable = false
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            signingConfig = signingConfigs.getByName("release")
+            ndk { debugSymbolLevel = "SYMBOL_TABLE" }
+        }
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    kotlinOptions { jvmTarget = "17" }
-    buildFeatures { compose = true }
-    packaging {
-        resources.excludes += setOf("META-INF/NOTICE.md", "META-INF/LICENSE.md")
+
+    lint {
+        checkReleaseBuilds = false
+        abortOnError = false
     }
+
+    kotlinOptions { jvmTarget = "17" }
+
+    testOptions {
+        unitTests.isReturnDefaultValues = true
+    }
+
+    buildFeatures { compose = true }
+
+    packaging {
+        resources.excludes += listOf("META-INF/LICENSE*", "META-INF/NOTICE*")
+        jniLibs {
+            excludes += listOf("lib/mips/**", "lib/mips64/**", "lib/armeabi/**", "lib/x86/**")
+            useLegacyPackaging = false
+        }
+    }
+
+    bundle {
+        abi { enableSplit = true }
+        language { enableSplit = false }
+    }
+    applicationVariants.all {
+        outputs.configureEach {
+            (this as? BaseVariantOutputImpl)?.outputFileName =
+                "OraJegyzet-v${versionName}-${buildType.name}.apk"
+        }
+    }
+}
+
+ksp {
+    arg("room.schemaLocation", "$projectDir/schemas")
 }
 
 // A Whisper-könyvtár a legújabb androidx.core-t húzná be (1.16.0), ami újabb
@@ -83,4 +147,16 @@ dependencies {
     // Email (SMTP)
     implementation("com.sun.mail:android-mail:1.6.7")
     implementation("com.sun.mail:android-activation:1.6.7")
+
+    // Testing
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
+    testImplementation("org.json:json:20240303")
+    androidTestImplementation("androidx.test.ext:junit:1.1.5")
+    androidTestImplementation("androidx.test:runner:1.5.2")
+    androidTestImplementation("androidx.test:rules:1.5.0")
+    androidTestImplementation("androidx.room:room-testing:2.6.1")
+    androidTestImplementation(composeBom)
+    androidTestImplementation("androidx.compose.ui:ui-test-junit4")
+    debugImplementation("androidx.compose.ui:ui-test-manifest")
 }

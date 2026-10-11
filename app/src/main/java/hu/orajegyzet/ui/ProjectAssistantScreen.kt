@@ -51,6 +51,8 @@ fun ProjectAssistantScreen(onBack: () -> Unit, onOpenNote: (Long) -> Unit) {
     var showDeleteProjectConfirm by remember { mutableStateOf(false) }
     var showNewEventDialog by remember { mutableStateOf(false) }
     var showNewTaskDialog by remember { mutableStateOf(false) }
+    var editingEvent by remember { mutableStateOf<ProjectEventEntity?>(null) }
+    var editingTask by remember { mutableStateOf<GanttTaskEntity?>(null) }
 
     var aiReportTitle by remember { mutableStateOf<String?>(null) }
     var aiReportText by remember { mutableStateOf<String?>(null) }
@@ -66,19 +68,19 @@ fun ProjectAssistantScreen(onBack: () -> Unit, onOpenNote: (Long) -> Unit) {
                 val s = Settings.get(ctx)
                 val prompt = when (type) {
                     "Vezetői Összefoglaló" -> """
-                        Készíts tömör, kategóriákba szedett Vezetői Összefoglalót az alábbi projektről!
+                        Készíts asszertív hivatali és vezetői stílusban megírt, határozott Vezetői Összefoglalót az alábbi projektről!
                         Projekt: ${prj.code} - ${prj.name} (${prj.ragStatus.uppercase()} RAG státusz)
                         Döntések és Kockázatok: ${events.joinToString { "${it.type}: ${it.title} (${it.impact})" }}
                         Mérföldkövek és Feladatok: ${tasks.joinToString { "${it.title}: ${it.progress}% kész" }}
                     """.trimIndent()
                     "Státuszjelentés" -> """
-                        Készíts heti stílusú Projekt Státuszjelentést (következő lépések, haladás, nyitott kérdések)!
+                        Készíts hivatalos, asszertív hivatali Projekt Státuszjelentést (következő lépések, haladás, határozott kötelezettségek)!
                         Projekt: ${prj.code} - ${prj.name}
                         Budget: ${prj.spent ?: "0"} / ${prj.budget ?: "ismeretlen"}
                         Feladatok haladása: ${tasks.map { "${it.title}: ${it.status}" }}
                     """.trimIndent()
                     else -> """
-                        Végezz QA Minőségi Auditor felülvizsgálatot a projekt kockázataira és lemaradásaira!
+                        Végezz szigorú, asszertív hivatali QA Minőségi Auditor felülvizsgálatot a projekt kockázataira és lemaradásaira!
                         Projekt: ${prj.code} - ${prj.name}
                         Nyitott kockázatok: ${events.filter { it.type == "risk" }.map { it.title }}
                         Megakadt/Késésben lévő feladatok: ${tasks.filter { it.progress < 100 }.map { it.title }}
@@ -102,25 +104,7 @@ fun ProjectAssistantScreen(onBack: () -> Unit, onOpenNote: (Long) -> Unit) {
     Scaffold(
         topBar = {
             TopAppBar(
-                title = {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            modifier = Modifier.padding(end = 8.dp)
-                        ) {
-                            "FÜLELŐ".forEach { char ->
-                                Text(
-                                    text = char.toString(),
-                                    fontWeight = FontWeight.Black,
-                                    fontSize = 9.sp,
-                                    lineHeight = 9.sp,
-                                    color = MaterialTheme.colorScheme.primary
-                                )
-                            }
-                        }
-                        Text("Projekt Asszisztens", fontWeight = FontWeight.Bold, fontSize = 18.sp)
-                    }
-                },
+                title = { Text("Projekt Asszisztens", fontWeight = FontWeight.Bold, fontSize = 18.sp) },
                 navigationIcon = { BackButton(onBack) },
                 actions = {
                     TextButton(onClick = { showNewProjectDialog = true }) {
@@ -143,60 +127,58 @@ fun ProjectAssistantScreen(onBack: () -> Unit, onOpenNote: (Long) -> Unit) {
                 Modifier.widthIn(max = 680.dp).fillMaxWidth().padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                // 1. Projekt Kiválasztó & Fejléc Kártya (Dupla kattintásra / nyomásra szerkeszthető)
+                // 1. Projekt Kiválasztó & Fejléc Kártya (Összecsukható részletekkel)
                 item {
                     if (activeProject != null) {
+                        var showProjectDetails by remember { mutableStateOf(false) }
+
                         Card(
-                            onClick = { showEditProjectDialog = true },
                             colors = CardDefaults.cardColors(
                                 containerColor = MaterialTheme.colorScheme.surfaceVariant
                             )
                         ) {
-                            Column(Modifier.fillMaxWidth().padding(16.dp)) {
+                            Column(Modifier.fillMaxWidth().padding(14.dp)) {
                                 Row(
                                     Modifier.fillMaxWidth(),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Column(Modifier.weight(1f)) {
-                                        Row(verticalAlignment = Alignment.CenterVertically) {
-                                            Text(
-                                                "${activeProject.code} · ${activeProject.name}",
-                                                fontWeight = FontWeight.Bold,
-                                                fontSize = 18.sp,
-                                                modifier = Modifier.weight(1f)
-                                            )
-                                            Text(
-                                                "✏️",
-                                                fontSize = 14.sp,
-                                                modifier = Modifier.padding(start = 4.dp)
-                                            )
-                                        }
-                                        Text(
-                                            "Felelős: ${activeProject.manager} · Céldátum: ${activeProject.targetDate}",
-                                            fontSize = 13.sp,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                    }
-                                    Spacer(Modifier.width(8.dp))
+                                    Text(
+                                        "${activeProject.code} · ${activeProject.name}",
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 17.sp,
+                                        modifier = Modifier.weight(1f)
+                                    )
                                     RagStatusBadge(activeProject.ragStatus)
+                                    Spacer(Modifier.width(6.dp))
+                                    IconButton(
+                                        onClick = { showEditProjectDialog = true },
+                                        modifier = Modifier.size(32.dp)
+                                    ) {
+                                        Text("✏️", fontSize = 15.sp)
+                                    }
                                 }
 
-                                var showDescription by remember { mutableStateOf(false) }
+                                Spacer(Modifier.height(4.dp))
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.clickable { showProjectDetails = !showProjectDetails }
+                                ) {
+                                    Text(
+                                        if (showProjectDetails) "▾ Részletek elrejtése" else "▸ Részletek kibontása (felelős, leírás, keret...)",
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                }
 
-                                if (activeProject.description.isNotBlank()) {
-                                    Spacer(Modifier.height(4.dp))
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        modifier = Modifier.clickable { showDescription = !showDescription }
-                                    ) {
-                                        Text(
-                                            if (showDescription) "▾ Leírás elrejtése" else "▸ Leírás megtekintése",
-                                            fontSize = 12.sp,
-                                            fontWeight = FontWeight.Medium,
-                                            color = MaterialTheme.colorScheme.primary
-                                        )
-                                    }
-                                    if (showDescription) {
+                                if (showProjectDetails) {
+                                    Spacer(Modifier.height(8.dp))
+                                    Text(
+                                        "Felelős: ${activeProject.manager} · Céldátum: ${activeProject.targetDate}",
+                                        fontSize = 13.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    if (activeProject.description.isNotBlank()) {
                                         Spacer(Modifier.height(4.dp))
                                         Text(
                                             activeProject.description,
@@ -204,13 +186,12 @@ fun ProjectAssistantScreen(onBack: () -> Unit, onOpenNote: (Long) -> Unit) {
                                             color = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
                                     }
-                                }
-
-                                if (activeProject.budget != null) {
-                                    Spacer(Modifier.height(8.dp))
-                                    Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                                        Text("Költségkeret: ${activeProject.budget}", fontSize = 12.sp)
-                                        Text("Felhasznált: ${activeProject.spent ?: "0 Ft"}", fontSize = 12.sp)
+                                    if (activeProject.budget != null) {
+                                        Spacer(Modifier.height(6.dp))
+                                        Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                                            Text("Költségkeret: ${activeProject.budget}", fontSize = 12.sp)
+                                            Text("Felhasznált: ${activeProject.spent ?: "0 Ft"}", fontSize = 12.sp)
+                                        }
                                     }
                                 }
 
@@ -355,8 +336,15 @@ fun ProjectAssistantScreen(onBack: () -> Unit, onOpenNote: (Long) -> Unit) {
                                     )
                                     Spacer(Modifier.weight(1f))
                                     ImpactBadge(e.impact)
+                                    Spacer(Modifier.width(4.dp))
+                                    IconButton(
+                                        onClick = { editingEvent = e },
+                                        modifier = Modifier.size(32.dp)
+                                    ) {
+                                        Text("✏️", fontSize = 15.sp)
+                                    }
                                 }
-                                Text(e.title, fontWeight = FontWeight.Medium, fontSize = 15.sp)
+                                Text(e.title, fontWeight = FontWeight.Bold, fontSize = 15.sp)
                                 if (e.description.isNotBlank()) {
                                     Text(
                                         e.description,
@@ -424,6 +412,13 @@ fun ProjectAssistantScreen(onBack: () -> Unit, onOpenNote: (Long) -> Unit) {
                                         modifier = Modifier.weight(1f)
                                     )
                                     PriorityBadge(t.priority)
+                                    Spacer(Modifier.width(4.dp))
+                                    IconButton(
+                                        onClick = { editingTask = t },
+                                        modifier = Modifier.size(32.dp)
+                                    ) {
+                                        Text("✏️", fontSize = 15.sp)
+                                    }
                                 }
                                 if (t.isMilestone) {
                                     Text(t.title, fontSize = 14.sp)
@@ -725,6 +720,146 @@ fun ProjectAssistantScreen(onBack: () -> Unit, onOpenNote: (Long) -> Unit) {
                 }) { Text("Hozzáadás") }
             },
             dismissButton = { TextButton(onClick = { showNewTaskDialog = false }) { Text("Mégse") } }
+        )
+    }
+
+    // --- Döntés / Kockázat Szerkesztő Dialog ---
+    if (editingEvent != null) {
+        var eType by remember { mutableStateOf(editingEvent!!.type) }
+        var eTitle by remember { mutableStateOf(editingEvent!!.title) }
+        var eDesc by remember { mutableStateOf(editingEvent!!.description) }
+        var eOwner by remember { mutableStateOf(editingEvent!!.owner ?: "") }
+        var eImpact by remember { mutableStateOf(editingEvent!!.impact) }
+        var eRationale by remember { mutableStateOf(editingEvent!!.decisionRationale ?: "") }
+        var eMitigation by remember { mutableStateOf(editingEvent!!.mitigation ?: "") }
+
+        AlertDialog(
+            onDismissRequest = { editingEvent = null },
+            title = { Text("Döntés / Kockázat Szerkesztése ✏️") },
+            text = {
+                Box(Modifier.heightIn(max = 400.dp)) {
+                    LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        item {
+                            LazyRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                item { FilterChip(selected = eType == "decision", onClick = { eType = "decision" }, label = { Text("Döntés", maxLines = 1) }) }
+                                item { FilterChip(selected = eType == "risk", onClick = { eType = "risk" }, label = { Text("Kockázat", maxLines = 1) }) }
+                                item { FilterChip(selected = eType == "milestone", onClick = { eType = "milestone" }, label = { Text("Mérföldkő", maxLines = 1) }) }
+                                item { FilterChip(selected = eType == "action", onClick = { eType = "action" }, label = { Text("Akció", maxLines = 1) }) }
+                            }
+                        }
+                        item {
+                            OutlinedTextField(value = eTitle, onValueChange = { eTitle = it }, label = { Text("Cím") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                        }
+                        item {
+                            OutlinedTextField(value = eDesc, onValueChange = { eDesc = it }, label = { Text("Részletes leírás") }, modifier = Modifier.fillMaxWidth())
+                        }
+                        item {
+                            OutlinedTextField(value = eOwner, onValueChange = { eOwner = it }, label = { Text("Felelős") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                        }
+                        item {
+                            Text("Hatás / Impakt:", fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                            LazyRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                item { FilterChip(selected = eImpact == "low", onClick = { eImpact = "low" }, label = { Text("Alacsony", maxLines = 1) }) }
+                                item { FilterChip(selected = eImpact == "medium", onClick = { eImpact = "medium" }, label = { Text("Közepes", maxLines = 1) }) }
+                                item { FilterChip(selected = eImpact == "high", onClick = { eImpact = "high" }, label = { Text("Magas", maxLines = 1) }) }
+                                item { FilterChip(selected = eImpact == "critical", onClick = { eImpact = "critical" }, label = { Text("Kritikus", maxLines = 1) }) }
+                            }
+                        }
+                        item {
+                            OutlinedTextField(value = eRationale, onValueChange = { eRationale = it }, label = { Text("Indoklás") }, modifier = Modifier.fillMaxWidth())
+                        }
+                        item {
+                            OutlinedTextField(value = eMitigation, onValueChange = { eMitigation = it }, label = { Text("Kockázatenyhítés") }, modifier = Modifier.fillMaxWidth())
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = {
+                        if (eTitle.isNotBlank()) {
+                            val updated = editingEvent!!.copy(
+                                type = eType,
+                                title = eTitle.trim(),
+                                description = eDesc.trim(),
+                                owner = eOwner.trim(),
+                                impact = eImpact,
+                                decisionRationale = eRationale.trim(),
+                                mitigation = eMitigation.trim()
+                            )
+                            scope.launch { db.projectEventDao().insert(updated) }
+                            editingEvent = null
+                        }
+                    }) { Text("Mentés") }
+                    TextButton(
+                        onClick = {
+                            scope.launch { db.projectEventDao().delete(editingEvent!!) }
+                            editingEvent = null
+                        },
+                        colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                    ) { Text("Törlés") }
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { editingEvent = null }) { Text("Mégse") }
+            }
+        )
+    }
+
+    // --- Gantt Feladat Szerkesztő Dialog ---
+    if (editingTask != null) {
+        var tTitle by remember { mutableStateOf(editingTask!!.title) }
+        var tAssignee by remember { mutableStateOf(editingTask!!.assignee) }
+        var tPriority by remember { mutableStateOf(editingTask!!.priority) }
+        var tProgress by remember { mutableFloatStateOf(editingTask!!.progress.toFloat()) }
+
+        AlertDialog(
+            onDismissRequest = { editingTask = null },
+            title = { Text("Gantt Feladat Szerkesztése ✏️") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(value = tTitle, onValueChange = { tTitle = it }, label = { Text("Feladat címe") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(value = tAssignee, onValueChange = { tAssignee = it }, label = { Text("Felelős neve") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    Text("Haladás: ${tProgress.toInt()}%", fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                    Slider(
+                        value = tProgress,
+                        onValueChange = { tProgress = it },
+                        valueRange = 0f..100f
+                    )
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        item { FilterChip(selected = tPriority == "low", onClick = { tPriority = "low" }, label = { Text("Alacsony", maxLines = 1) }) }
+                        item { FilterChip(selected = tPriority == "medium", onClick = { tPriority = "medium" }, label = { Text("Közepes", maxLines = 1) }) }
+                        item { FilterChip(selected = tPriority == "high", onClick = { tPriority = "high" }, label = { Text("Magas", maxLines = 1) }) }
+                        item { FilterChip(selected = tPriority == "critical", onClick = { tPriority = "critical" }, label = { Text("Kritikus", maxLines = 1) }) }
+                    }
+                }
+            },
+            confirmButton = {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = {
+                        if (tTitle.isNotBlank()) {
+                            val updated = editingTask!!.copy(
+                                title = tTitle.trim(),
+                                assignee = tAssignee.trim(),
+                                priority = tPriority,
+                                progress = tProgress.toInt()
+                            )
+                            scope.launch { db.ganttTaskDao().insert(updated) }
+                            editingTask = null
+                        }
+                    }) { Text("Mentés") }
+                    TextButton(
+                        onClick = {
+                            scope.launch { db.ganttTaskDao().delete(editingTask!!) }
+                            editingTask = null
+                        },
+                        colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                    ) { Text("Törlés") }
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { editingTask = null }) { Text("Mégse") }
+            }
         )
     }
 }

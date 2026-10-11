@@ -50,14 +50,6 @@ fun WelcomeScreen(onEnterApp: () -> Unit, onExitApp: () -> Unit) {
                     color = MaterialTheme.colorScheme.primary,
                     letterSpacing = 2.sp
                 )
-
-                Text(
-                    text = "AI Projekt Asszisztens & Órai Jegyzőkönyvező",
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.Medium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    textAlign = TextAlign.Center
-                )
             }
 
             // Kiemelt Funkció Kártyák

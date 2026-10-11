@@ -8,6 +8,8 @@
 .externalNativeBuild
 .cxx
 local.properties
+*.jks
+*.keystore
 /app/build
 /whispercore/build
 /whispercore/.cxx

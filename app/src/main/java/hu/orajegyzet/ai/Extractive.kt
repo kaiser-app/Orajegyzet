@@ -10,7 +10,7 @@ import kotlin.math.sqrt
 object Extractive {
 
     // Gyakori magyar funkciószavak — ezeket nem számítjuk a "fontosság"-ba.
-    private val STOP = setOf(
+    val STOP = setOf(
         "hogy", "nem", "egy", "csak", "már", "vagy", "mint", "meg", "még", "majd",
         "volt", "lesz", "van", "vannak", "lehet", "kell", "lett", "lenne", "lehetne",
         "azt", "ezt", "ami", "amely", "amelyek", "aki", "akik", "ahol", "amikor",

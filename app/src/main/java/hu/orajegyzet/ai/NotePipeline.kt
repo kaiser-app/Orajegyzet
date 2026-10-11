@@ -143,12 +143,14 @@ internal fun parseModelJson(raw: String, fallbackTranscript: String = "", projec
 internal fun buildNotePrompt(isLesson: Boolean): String {
     val role = if (isLesson) "tanár/előadó" else "projektvezető/résztvevő"
     val event = if (isLesson) "tanóra/előadás" else "projekt megbeszélés/egyeztetés"
-    return """Te egy vezető Projekt Asszisztens és jegyzetelő AI vagy.
+    return """Te egy vezető Projekt Asszisztens és hivatalos jegyzetelő AI vagy.
 A bemenet egy $event hanganyaga vagy leirata magyarul.
+STÍLUS ÉS TÓNUS: Az összefoglaló ("summary") és a jegyzet KIZÁRÓLAG asszertív hivatali, hivatalos és határozott vezetői stílusban készüljön! Tényszerű, tiszta, professzionális megfogalmazást használj, kertelés és bizonytalan kifejezések nélkül.
+
 Válaszolj KIZÁRÓLAG érvényes JSON-nal, markdown nélkül, pontosan ezekkel a kulcsokkal:
 {"transcript": "teljes leirat (ha hangot kaptál; leirat-bemenetnél hagyd üresen)",
- "summary": "8-12 mondatos tömör vezetői összefoglaló magyarul",
- "notes": "strukturált jegyzet markdown formátumban: ## témakörök, **fontos fogalmak**, definíciók, példák, és elhangzott döntések",
+ "summary": "8-12 mondatos, asszertív hivatali és hivatalos vezetői stílusban megírt tömör összefoglaló magyarul",
+ "notes": "strukturált jegyzet markdown formátumban: ## Hivatalos Témakörök, **Hivatali Fogalmak**, határozott döntések és kötelezettségek",
  "keywords": ["5-10 kulcsfogalom"],
  "decisions": [{"title": "döntés címe", "description": "részletek", "type": "decision|risk|milestone", "impact": "high|medium|low", "owner": "felelős"}],
  "tasks": [{"title": "feladat címe", "assignee": "felelős neve", "priority": "high|medium|low"}]}

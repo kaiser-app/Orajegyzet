@@ -1,11 +1,70 @@
 package hu.orajegyzet.data
 
 import android.content.Context
+import android.security.keystore.KeyGenParameterSpec
+import android.security.keystore.KeyProperties
+import android.util.Base64
+import android.util.Log
 import androidx.datastore.preferences.core.*
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import java.security.KeyStore
+import javax.crypto.Cipher
+import javax.crypto.KeyGenerator
+import javax.crypto.SecretKey
+import javax.crypto.spec.GCMParameterSpec
+
+class SecretStorageException(msg: String, cause: Throwable) : Exception(msg, cause)
+
+object SecretCipher {
+    private const val ALIAS = "orajegyzet_secrets"
+    @Volatile var secretsLost = false
+
+    private fun key(): SecretKey {
+        val ks = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+        (ks.getKey(ALIAS, null) as? SecretKey)?.let { return it }
+        val gen = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore")
+        gen.init(
+            KeyGenParameterSpec.Builder(
+                ALIAS,
+                KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT
+            )
+                .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
+                .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
+                .build()
+        )
+        return gen.generateKey()
+    }
+
+    fun encrypt(plain: String): String {
+        if (plain.isEmpty()) return ""
+        return try {
+            val c = Cipher.getInstance("AES/GCM/NoPadding").apply { init(Cipher.ENCRYPT_MODE, key()) }
+            val out = c.iv + c.doFinal(plain.toByteArray(Charsets.UTF_8))
+            "enc1:" + Base64.encodeToString(out, Base64.NO_WRAP)
+        } catch (e: Exception) {
+            Log.e("SecretCipher", "Titkosítás sikertelen", e)
+            throw SecretStorageException("A titkos adat biztonságos mentése nem sikerült.", e)
+        }
+    }
+
+    fun decrypt(stored: String): String {
+        if (!stored.startsWith("enc1:")) return stored // régi, titkosítatlan érték
+        if (stored.length <= 5) return ""
+        return try {
+            val raw = Base64.decode(stored.removePrefix("enc1:"), Base64.NO_WRAP)
+            val c = Cipher.getInstance("AES/GCM/NoPadding")
+            c.init(Cipher.DECRYPT_MODE, key(), GCMParameterSpec(128, raw, 0, 12))
+            String(c.doFinal(raw, 12, raw.size - 12), Charsets.UTF_8)
+        } catch (e: Exception) {
+            Log.w("SecretCipher", "Visszafejtés sikertelen", e)
+            secretsLost = true
+            ""
+        }
+    }
+}
 
 enum class Mode { OFFLINE, ONLINE, AUTO }
 
@@ -30,7 +89,8 @@ data class AppSettings(
     val smtpPort: Int = 587,
     val smtpUser: String = "",
     val smtpPass: String = "",              // Gmail esetén alkalmazásjelszó!
-    val digestHour: Int = 18
+    val digestHour: Int = 18,
+    val secretsLost: Boolean = false
 )
 
 private val Context.ds by preferencesDataStore("settings")
@@ -57,9 +117,32 @@ object Settings {
     private val SPASS = stringPreferencesKey("spass")
     private val DHOUR = intPreferencesKey("dhour")
 
+    suspend fun migrateSecretsIfNeeded(ctx: Context) {
+        try {
+            ctx.ds.edit { p ->
+                for (key in listOf(GKEY, SPASS)) {
+                    val v = p[key] ?: continue
+                    if (v.isNotEmpty() && !v.startsWith("enc1:")) {
+                        try {
+                            val enc = SecretCipher.encrypt(v)
+                            if (enc.startsWith("enc1:")) p[key] = enc
+                        } catch (_: SecretStorageException) {
+                            // Hagyjuk érintetlenül az eredeti értéket, ha nem sikerült a titkosítás
+                        }
+                    }
+                }
+            }
+        } catch (_: Exception) {}
+    }
+
     fun flow(ctx: Context): Flow<AppSettings> = ctx.ds.data.map { p ->
         val rawModel = p[GMODEL] ?: "gemini-3.1-flash-lite"
         val model = if (rawModel.contains("1.5") || rawModel.contains("2.0") || rawModel.contains("2.5-flash-lite") || rawModel.isBlank()) "gemini-3.1-flash-lite" else rawModel
+        val rawGkey = p[GKEY] ?: ""
+        val rawSpass = p[SPASS] ?: ""
+        val gkey = SecretCipher.decrypt(rawGkey)
+        val spass = SecretCipher.decrypt(rawSpass)
+
         AppSettings(
             mode = p[MODE]?.let { Mode.valueOf(it) } ?: Mode.AUTO,
             privacyLock = p[PRIVACY] ?: false,
@@ -73,29 +156,39 @@ object Settings {
             whisperOverlapSec = p[OVERLAP] ?: 2,
             summaryBlockChars = p[SUMBLOCK] ?: 2000,
             audioRetentionMin = p[AUDIORET] ?: 30,
-            geminiApiKey = p[GKEY] ?: "",
+            geminiApiKey = gkey,
             geminiModel = model,
             email = p[EMAIL] ?: "",
             smtpHost = p[SHOST] ?: "smtp.gmail.com",
             smtpPort = p[SPORT] ?: 587,
             smtpUser = p[SUSER] ?: "",
-            smtpPass = p[SPASS] ?: "",
-            digestHour = p[DHOUR] ?: 18
+            smtpPass = spass,
+            digestHour = p[DHOUR] ?: 18,
+            secretsLost = SecretCipher.secretsLost
         )
     }
 
     suspend fun get(ctx: Context): AppSettings = flow(ctx).first()
 
     suspend fun save(ctx: Context, s: AppSettings) {
+        var secretError: SecretStorageException? = null
+        val encGkey = try { SecretCipher.encrypt(s.geminiApiKey) } catch (e: SecretStorageException) { secretError = e; null }
+        val encSpass = try { SecretCipher.encrypt(s.smtpPass) } catch (e: SecretStorageException) { secretError = e; null }
+
         ctx.ds.edit { p ->
             p[MODE] = s.mode.name; p[PRIVACY] = s.privacyLock; p[WIFI] = s.wifiOnly
             p[USE_GEMMA] = s.useGemma
             p[THREADS] = s.whisperThreads; p[WARM] = s.keepModelWarm; p[WARM_MIN] = s.warmMinutes
             p[STAGED] = s.stagedDisplay; p[CHUNK] = s.whisperChunkSec; p[OVERLAP] = s.whisperOverlapSec
             p[SUMBLOCK] = s.summaryBlockChars; p[AUDIORET] = s.audioRetentionMin
-            p[GKEY] = s.geminiApiKey; p[GMODEL] = s.geminiModel
+            encGkey?.let { p[GKEY] = it }
+            p[GMODEL] = s.geminiModel
             p[EMAIL] = s.email; p[SHOST] = s.smtpHost; p[SPORT] = s.smtpPort
-            p[SUSER] = s.smtpUser; p[SPASS] = s.smtpPass; p[DHOUR] = s.digestHour
+            p[SUSER] = s.smtpUser
+            encSpass?.let { p[SPASS] = it }
+            p[DHOUR] = s.digestHour
         }
+        if (secretError == null) SecretCipher.secretsLost = false
+        secretError?.let { throw it }
     }
 }

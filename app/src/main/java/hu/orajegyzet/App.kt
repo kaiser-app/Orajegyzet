@@ -6,6 +6,7 @@ import android.app.NotificationManager
 import hu.orajegyzet.bell.BellScheduler
 import hu.orajegyzet.data.Db
 import hu.orajegyzet.data.ProjectSeed
+import hu.orajegyzet.data.Settings
 import hu.orajegyzet.work.DigestWorker
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -20,6 +21,7 @@ class App : Application() {
         super.onCreate()
         createChannels()
         appScope.launch {
+            runCatching { Settings.migrateSecretsIfNeeded(this@App) }
             ProjectSeed.seedIfNeeded(this@App)
             BellScheduler.rescheduleAll(this@App, Db.get(this@App).lessonDao())
             DigestWorker.schedule(this@App)

@@ -63,8 +63,8 @@ object ModelImporter {
                         val rel = if (hasTopFolder) name.substringAfter('/') else name
                         if (rel.isNotEmpty()) {
                             val out = File(tmp, rel)
-                            // zip-slip védelem
-                            check(out.canonicalPath.startsWith(tmp.canonicalPath)) { "Érvénytelen zip-bejegyzés" }
+                            val base = tmp.canonicalPath + File.separator
+                            check(out.canonicalPath.startsWith(base) || out.canonicalPath == tmp.canonicalPath) { "Érvénytelen zip-bejegyzés" }
                             if (entry.isDirectory) out.mkdirs()
                             else {
                                 out.parentFile?.mkdirs()
