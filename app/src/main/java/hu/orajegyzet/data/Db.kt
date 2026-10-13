@@ -2,6 +2,8 @@ package hu.orajegyzet.data
 
 import android.content.Context
 import androidx.room.*
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 import kotlinx.coroutines.flow.Flow
 import java.util.UUID
 
@@ -38,7 +40,9 @@ data class Note(
     val structured: String = "",
     val keywords: String = "",
     val error: String = "",
-    val processedOnline: Boolean? = null
+    val processedOnline: Boolean? = null,
+    val summaryEngine: String? = null,
+    val summaryWarning: String? = null
 )
 
 // 1. PROJEKT ENTITÁS
@@ -229,7 +233,7 @@ interface GanttTaskDao {
         ProjectEventEntity::class,
         GanttTaskEntity::class
     ],
-    version = 3,
+    version = 4,
     exportSchema = true
 )
 @TypeConverters(Converters::class)
@@ -241,9 +245,17 @@ abstract class Db : RoomDatabase() {
     abstract fun ganttTaskDao(): GanttTaskDao
 
     companion object {
+        val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE notes ADD COLUMN summaryEngine TEXT")
+                db.execSQL("ALTER TABLE notes ADD COLUMN summaryWarning TEXT")
+            }
+        }
+
         @Volatile private var inst: Db? = null
         fun get(ctx: Context): Db = inst ?: synchronized(this) {
             inst ?: Room.databaseBuilder(ctx.applicationContext, Db::class.java, "orajegyzet.db")
+                .addMigrations(MIGRATION_3_4)
                 .build().also { inst = it }
         }
 

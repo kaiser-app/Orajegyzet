@@ -90,7 +90,8 @@ data class AppSettings(
     val smtpUser: String = "",
     val smtpPass: String = "",              // Gmail esetén alkalmazásjelszó!
     val digestHour: Int = 18,
-    val secretsLost: Boolean = false
+    val secretsLost: Boolean = false,
+    val gemmaModelName: String = ""
 )
 
 private val Context.ds by preferencesDataStore("settings")
@@ -116,6 +117,7 @@ object Settings {
     private val SUSER = stringPreferencesKey("suser")
     private val SPASS = stringPreferencesKey("spass")
     private val DHOUR = intPreferencesKey("dhour")
+    private val GEMMA_MODEL_NAME = stringPreferencesKey("gemma_model_name")
 
     suspend fun migrateSecretsIfNeeded(ctx: Context) {
         try {
@@ -164,7 +166,8 @@ object Settings {
             smtpUser = p[SUSER] ?: "",
             smtpPass = spass,
             digestHour = p[DHOUR] ?: 18,
-            secretsLost = SecretCipher.secretsLost
+            secretsLost = SecretCipher.secretsLost,
+            gemmaModelName = p[GEMMA_MODEL_NAME] ?: ""
         )
     }
 
@@ -187,6 +190,7 @@ object Settings {
             p[SUSER] = s.smtpUser
             encSpass?.let { p[SPASS] = it }
             p[DHOUR] = s.digestHour
+            p[GEMMA_MODEL_NAME] = s.gemmaModelName
         }
         if (secretError == null) SecretCipher.secretsLost = false
         secretError?.let { throw it }
