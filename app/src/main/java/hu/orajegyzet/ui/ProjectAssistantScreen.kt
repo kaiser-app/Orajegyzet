@@ -15,8 +15,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import hu.orajegyzet.ai.GeminiPipeline
-import hu.orajegyzet.ai.Extractive
+import hu.orajegyzet.ai.ModeSelector
+import hu.orajegyzet.ai.ReportBuilder
+import hu.orajegyzet.ai.SummaryEngine
 import hu.orajegyzet.data.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -56,47 +57,35 @@ fun ProjectAssistantScreen(onBack: () -> Unit, onOpenNote: (Long) -> Unit) {
 
     var aiReportTitle by remember { mutableStateOf<String?>(null) }
     var aiReportText by remember { mutableStateOf<String?>(null) }
+    var aiReportEngine by remember { mutableStateOf<String?>(null) }
+    var aiReportWarning by remember { mutableStateOf<String?>(null) }
+    var aiReportBusy by remember { mutableStateOf(false) }
+    var canRephraseWithGemini by remember { mutableStateOf(false) }
 
-    // --- AI Jelentés Generáló ---
-    fun runAiAnalysis(type: String) {
+    // --- AI Jelentés Generáló (1.0.4: tényblokk + Gemini / Gemma / offline vázlat) ---
+    fun runAiAnalysis(type: String, forceGemini: Boolean = false) {
         val prj = activeProject ?: return
         aiReportTitle = type
-        aiReportText = "AI elemzés és jelentés készítése folyamatban..."
+        aiReportEngine = null
+        aiReportWarning = null
+        aiReportBusy = true
+        aiReportText = if (forceGemini) "Újrafogalmazás Geminivel…" else "Jelentés készítése…"
+        val evs = events
+        val tks = tasks
 
         scope.launch(Dispatchers.IO) {
             try {
                 val s = Settings.get(ctx)
-                val prompt = when (type) {
-                    "Vezetői Összefoglaló" -> """
-                        Készíts asszertív hivatali és vezetői stílusban megírt, határozott Vezetői Összefoglalót az alábbi projektről!
-                        Projekt: ${prj.code} - ${prj.name} (${prj.ragStatus.uppercase()} RAG státusz)
-                        Döntések és Kockázatok: ${events.joinToString { "${it.type}: ${it.title} (${it.impact})" }}
-                        Mérföldkövek és Feladatok: ${tasks.joinToString { "${it.title}: ${it.progress}% kész" }}
-                    """.trimIndent()
-                    "Státuszjelentés" -> """
-                        Készíts hivatalos, asszertív hivatali Projekt Státuszjelentést (következő lépések, haladás, határozott kötelezettségek)!
-                        Projekt: ${prj.code} - ${prj.name}
-                        Budget: ${prj.spent ?: "0"} / ${prj.budget ?: "ismeretlen"}
-                        Feladatok haladása: ${tasks.map { "${it.title}: ${it.status}" }}
-                    """.trimIndent()
-                    else -> """
-                        Végezz szigorú, asszertív hivatali QA Minőségi Auditor felülvizsgálatot a projekt kockázataira és lemaradásaira!
-                        Projekt: ${prj.code} - ${prj.name}
-                        Nyitott kockázatok: ${events.filter { it.type == "risk" }.map { it.title }}
-                        Megakadt/Késésben lévő feladatok: ${tasks.filter { it.progress < 100 }.map { it.title }}
-                    """.trimIndent()
-                }
-
-                val resultText = if (s.geminiApiKey.isNotBlank()) {
-                    val pipeline = GeminiPipeline(s.geminiApiKey, s.geminiModel)
-                    pipeline.resummarize(prompt, prj.name, LocalDate.now().toString(), false).summary
-                } else {
-                    Extractive.summarize(prompt, 6)
-                }
-
-                aiReportText = resultText
+                val r = ReportBuilder.generate(ctx, s, type, prj, evs, tks, forceGemini = forceGemini)
+                aiReportText = r.text
+                aiReportEngine = r.engine
+                aiReportWarning = r.warning
+                canRephraseWithGemini = r.engine != SummaryEngine.GEMINI && !s.privacyLock &&
+                    s.geminiApiKey.isNotBlank() && ModeSelector.hasNetwork(ctx, s.wifiOnly)
             } catch (e: Exception) {
-                aiReportText = "Hiba történt az AI jelentés generálása során: ${e.message}"
+                aiReportText = "Hiba történt a jelentés készítése során: ${e.message}"
+            } finally {
+                aiReportBusy = false
             }
         }
     }
@@ -247,17 +236,17 @@ fun ProjectAssistantScreen(onBack: () -> Unit, onOpenNote: (Long) -> Unit) {
                 item {
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         item {
-                            OutlinedButton(onClick = { runAiAnalysis("Vezetői Összefoglaló") }) {
+                            OutlinedButton(onClick = { runAiAnalysis(ReportBuilder.EXECUTIVE) }) {
                                 Text("✨ Vezetői Összefoglaló", fontSize = 12.sp, maxLines = 1)
                             }
                         }
                         item {
-                            OutlinedButton(onClick = { runAiAnalysis("Státuszjelentés") }) {
+                            OutlinedButton(onClick = { runAiAnalysis(ReportBuilder.STATUS) }) {
                                 Text("📊 Státuszjelentés", fontSize = 12.sp, maxLines = 1)
                             }
                         }
                         item {
-                            OutlinedButton(onClick = { runAiAnalysis("QA Minőségi Audit") }) {
+                            OutlinedButton(onClick = { runAiAnalysis(ReportBuilder.QA) }) {
                                 Text("🛡️ QA Audit", fontSize = 12.sp, maxLines = 1)
                             }
                         }
@@ -280,7 +269,7 @@ fun ProjectAssistantScreen(onBack: () -> Unit, onOpenNote: (Long) -> Unit) {
                         Tab(
                             selected = selectedTab == 2,
                             onClick = { selectedTab = 2 },
-                            text = { Text("Fülelő (${meetings.size})", maxLines = 1) }
+                            text = { Text("Megbeszélések (${meetings.size})", maxLines = 1) }
                         )
                     }
                 }
@@ -438,7 +427,7 @@ fun ProjectAssistantScreen(onBack: () -> Unit, onOpenNote: (Long) -> Unit) {
                     }
                 }
 
-                // Tab 2: Fülelő Megbeszélések
+                // Tab 2: Megbeszélések
                 if (selectedTab == 2) {
                     item {
                         Text("Projekt Megbeszélések & Átiratok", fontWeight = FontWeight.Bold)
@@ -474,20 +463,34 @@ fun ProjectAssistantScreen(onBack: () -> Unit, onOpenNote: (Long) -> Unit) {
     // --- AI Jelentés Kijelző Dialog ---
     if (aiReportText != null) {
         AlertDialog(
-            onDismissRequest = { aiReportText = null; aiReportTitle = null },
+            onDismissRequest = { if (!aiReportBusy) { aiReportText = null; aiReportTitle = null } },
             title = { Text(aiReportTitle ?: "AI Elemzés") },
             text = {
-                Box(Modifier.heightIn(max = 360.dp)) {
-                    LazyColumn {
-                        item {
-                            MarkdownText(aiReportText!!)
+                Box(Modifier.heightIn(max = 420.dp)) {
+                    LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        if (aiReportBusy) item { ProcessingIndicator(label = aiReportText) }
+                        else {
+                            if (aiReportEngine != null) item { EngineBadge(aiReportEngine) }
+                            aiReportWarning?.let { w ->
+                                item {
+                                    Text("⚠️ $w", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                            }
+                            item { MarkdownText(aiReportText!!) }
                         }
                     }
                 }
             },
             confirmButton = {
-                TextButton(onClick = { aiReportText = null; aiReportTitle = null }) {
+                TextButton(enabled = !aiReportBusy, onClick = { aiReportText = null; aiReportTitle = null }) {
                     Text("Bezárás")
+                }
+            },
+            dismissButton = {
+                if (!aiReportBusy && canRephraseWithGemini && aiReportTitle != null) {
+                    TextButton(onClick = { runAiAnalysis(aiReportTitle!!, forceGemini = true) }) {
+                        Text("Újrafogalmazás Geminivel")
+                    }
                 }
             }
         )

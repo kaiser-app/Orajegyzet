@@ -20,39 +20,33 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.time.LocalDate
 
-/** Jópofa, ötletes folyamatjelző: pörgő ikon + váltakozó, játékos feliratok. */
+/**
+ * Folyamatjelző a feldolgozás VALÓDI lépésével (pl. „Leirat: 3/12 darab (Whisper)",
+ * „Összefoglaló: Gemma (2/4 blokk)"). A korábbi tréfás, körbeforgó feliratok helyett (1.0.4).
+ */
 @Composable
-fun ProcessingIndicator(modifier: Modifier = Modifier) {
-    val messages = listOf(
-        "Hang felpörgetése…",
-        "Whisper hegyezi a fülét…",
-        "Magyar szavak vadászata…",
-        "Mondatok rendezgetése…",
-        "Gemma gondolkodóba esett…",
-        "Lényeg kiemelése…",
-        "Kulcsfogalmak gyűjtése…",
-        "Mindjárt kész, csak egy korty kávé…"
-    )
-    var idx by remember { mutableIntStateOf(0) }
-    LaunchedEffect(Unit) {
-        while (true) { delay(2500); idx = (idx + 1) % messages.size }
-    }
-    val transition = rememberInfiniteTransition(label = "spin")
-    val angle by transition.animateFloat(
-        initialValue = 0f, targetValue = 360f,
-        animationSpec = infiniteRepeatable(tween(1100, easing = LinearEasing)), label = "angle"
-    )
-    val pulse by transition.animateFloat(
-        initialValue = 0.7f, targetValue = 1f,
-        animationSpec = infiniteRepeatable(tween(700), repeatMode = RepeatMode.Reverse), label = "pulse"
-    )
-
+fun ProcessingIndicator(modifier: Modifier = Modifier, label: String? = null) {
     Row(modifier, verticalAlignment = Alignment.CenterVertically) {
-        Text("✦", fontSize = 18.sp, color = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.rotate(angle).graphicsLayer { alpha = pulse })
+        CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)
         Spacer(Modifier.width(8.dp))
-        Text(messages[idx], fontSize = 13.sp, fontWeight = FontWeight.Medium,
-            color = MaterialTheme.colorScheme.primary)
+        Text(label?.takeIf { it.isNotBlank() } ?: "Feldolgozás…", fontSize = 13.sp,
+            fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.primary)
+    }
+}
+
+/** Kis címke: mi készítette az összefoglalót (Gemma / Gemini / kivonat / offline vázlat). */
+@Composable
+fun EngineBadge(engine: String?, modifier: Modifier = Modifier) {
+    val label = hu.orajegyzet.ai.SummaryEngine.label(engine) ?: return
+    val ai = engine == hu.orajegyzet.ai.SummaryEngine.GEMMA || engine == hu.orajegyzet.ai.SummaryEngine.GEMINI
+    Surface(
+        modifier = modifier,
+        shape = MaterialTheme.shapes.small,
+        color = if (ai) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.tertiaryContainer
+    ) {
+        Text(label, fontSize = 11.sp, fontWeight = FontWeight.Medium,
+            color = if (ai) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onTertiaryContainer,
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp))
     }
 }
 
@@ -185,7 +179,7 @@ fun HistoryScreen(onOpenNote: (Long) -> Unit, onBack: () -> Unit) {
                                                         Spacer(Modifier.height(2.dp))
                                                         val preview = when (n.status) {
                                                             NoteStatus.DONE -> n.summary.take(80).ifBlank { "(leirat kész)" }
-                                                            NoteStatus.PROCESSING, NoteStatus.QUEUED -> "feldolgozás alatt…"
+                                                            NoteStatus.PROCESSING, NoteStatus.QUEUED -> n.progress ?: "feldolgozás alatt…"
                                                             NoteStatus.RECORDING -> "● felvétel"
                                                             NoteStatus.ERROR -> "hiba: ${n.error.take(60)}"
                                                         }

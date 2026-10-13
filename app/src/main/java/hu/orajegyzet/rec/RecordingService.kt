@@ -32,7 +32,7 @@ import java.time.LocalTime
 
 /**
  * Mikrofonos előtér-szolgáltatás. 16 kHz mono AAC/M4A-t rögzít (~21 MB / 45 perc),
- * ami a Vosk-nak (16 kHz PCM-re dekódolva) és a Gemini-nek is ideális.
+ * ami a Whisper-nek (16 kHz PCM-re dekódolva) és a Gemini-nek is ideális.
  * Indítás: csak felhasználói interakcióból (értesítés/widget/app). Leállás:
  * kicsengetési alarm, kézi stop, vagy biztonsági időkorlát.
  */

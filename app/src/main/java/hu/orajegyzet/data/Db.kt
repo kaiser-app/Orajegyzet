@@ -42,7 +42,9 @@ data class Note(
     val error: String = "",
     val processedOnline: Boolean? = null,
     val summaryEngine: String? = null,
-    val summaryWarning: String? = null
+    val summaryWarning: String? = null,
+    /** A feldolgozás aktuális, valódi lépése (pl. „Leirat: 3/12 darab (Whisper)"). 1.0.4 */
+    val progress: String? = null
 )
 
 // 1. PROJEKT ENTITÁS
@@ -148,6 +150,9 @@ interface NoteDao {
     @Query("UPDATE notes SET status = 'ERROR', error = 'Megszakadt feldolgozás (az app újraindult). Indíts új felvételt.' WHERE status = 'PROCESSING'")
     suspend fun failStuckProcessing()
 
+    @Query("UPDATE notes SET progress = :progress WHERE id = :id")
+    suspend fun setProgress(id: Long, progress: String?)
+
     @Query("UPDATE notes SET audioPath = null WHERE audioPath = :path")
     suspend fun clearAudioPath(path: String)
 
@@ -233,7 +238,7 @@ interface GanttTaskDao {
         ProjectEventEntity::class,
         GanttTaskEntity::class
     ],
-    version = 4,
+    version = 5,
     exportSchema = true
 )
 @TypeConverters(Converters::class)
@@ -252,10 +257,16 @@ abstract class Db : RoomDatabase() {
             }
         }
 
+        val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE notes ADD COLUMN progress TEXT")
+            }
+        }
+
         @Volatile private var inst: Db? = null
         fun get(ctx: Context): Db = inst ?: synchronized(this) {
             inst ?: Room.databaseBuilder(ctx.applicationContext, Db::class.java, "orajegyzet.db")
-                .addMigrations(MIGRATION_3_4)
+                .addMigrations(MIGRATION_3_4, MIGRATION_4_5)
                 .build().also { inst = it }
         }
 

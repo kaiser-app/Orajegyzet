@@ -61,7 +61,10 @@ fun TodayScreen(
     val scope = rememberCoroutineScope()
     val today = LocalDate.now()
 
-    val lessons by db.lessonDao().byDay(today.dayOfWeek.value).collectAsState(initial = emptyList())
+    val appSettings by Settings.flow(ctx).collectAsState(initial = AppSettings())
+    val schoolMode = appSettings.schoolMode
+    val allLessonsToday by db.lessonDao().byDay(today.dayOfWeek.value).collectAsState(initial = emptyList())
+    val lessons = if (schoolMode) allLessonsToday else emptyList()
     val projects by db.projectDao().all().collectAsState(initial = emptyList())
     val notes by db.noteDao().all()
         .map { list -> list.filter { it.dateIso == today.toString() } }
@@ -177,7 +180,7 @@ fun TodayScreen(
                                 label = { Text("Projekt", maxLines = 1) }
                             )
                         }
-                        item {
+                        if (schoolMode) item {
                             FilterChip(
                                 selected = selectedContextType == "lesson",
                                 onClick = { selectedContextType = "lesson" },
@@ -272,7 +275,7 @@ fun TodayScreen(
                 actions = {
                     TextButton(onClick = onOpenAssistant) { Text("Projekt AI", maxLines = 1) }
                     TextButton(onClick = onOpenHistory) { Text("Korábbi", maxLines = 1) }
-                    TextButton(onClick = onOpenSchedule) { Text("Órarend", maxLines = 1) }
+                    if (schoolMode) TextButton(onClick = onOpenSchedule) { Text("Órarend", maxLines = 1) }
                     TextButton(onClick = onOpenSettings) { Text("Beállítások", maxLines = 1) }
                 }
             )
@@ -303,7 +306,8 @@ fun TodayScreen(
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text("Mai órák & Projektek", fontWeight = FontWeight.Medium, fontSize = 18.sp)
+                            Text(if (schoolMode) "Mai órák & Projektek" else "Mai megbeszélések",
+                                fontWeight = FontWeight.Medium, fontSize = 18.sp)
                             OutlinedButton(
                                 onClick = { audioPicker.launch("audio/*") }
                             ) {
@@ -312,7 +316,7 @@ fun TodayScreen(
                         }
                         if (lessons.isEmpty() && projects.isEmpty()) {
                             Text(
-                                "Nincs felvitt óra vagy projekt mára.",
+                                if (schoolMode) "Nincs felvitt óra vagy projekt mára." else "Még nincs projekt. Hozz létre egyet a Projekt AI menüben.",
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
@@ -330,8 +334,8 @@ fun TodayScreen(
                                 }
                                 when (note?.status) {
                                     NoteStatus.RECORDING -> Text("● felvétel", color = MaterialTheme.colorScheme.error)
-                                    NoteStatus.QUEUED -> ProcessingIndicator()
-                                    NoteStatus.PROCESSING -> ProcessingIndicator()
+                                    NoteStatus.QUEUED -> ProcessingIndicator(label = note.progress ?: "Sorban áll…")
+                                    NoteStatus.PROCESSING -> ProcessingIndicator(label = note.progress)
                                     NoteStatus.DONE -> TextButton(onClick = { onOpenNote(note.id) }) { Text("Jegyzet") }
                                     NoteStatus.ERROR -> Text("hiba", color = MaterialTheme.colorScheme.error)
                                     null -> {}
@@ -402,7 +406,8 @@ fun TodayScreen(
                                 verticalAlignment = Alignment.CenterVertically) {
                                 Column(Modifier.weight(1f)) {
                                     Text("${n.subject} · ${n.docCode.ifBlank { fmt(n.startMin) }}", fontWeight = FontWeight.Medium)
-                                    ProcessingIndicator(Modifier.padding(top = 4.dp))
+                                    ProcessingIndicator(Modifier.padding(top = 4.dp),
+                                        label = n.progress ?: if (n.status == NoteStatus.QUEUED) "Sorban áll…" else null)
                                 }
                             }
                         }
@@ -432,6 +437,8 @@ fun TodayScreen(
                                         Text("✏️", fontSize = 18.sp)
                                     }
                                 }
+                                Spacer(Modifier.height(4.dp))
+                                EngineBadge(n.summaryEngine)
                                 Spacer(Modifier.height(4.dp))
                                 Text(n.summary.take(140) + if (n.summary.length > 140) "…" else "",
                                     fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -491,7 +498,7 @@ fun NoteDetailScreen(noteId: Long, onBack: () -> Unit) {
                 try {
                     val intent = Intent(Intent.ACTION_SENDTO).apply {
                         data = Uri.parse("mailto:${s.email}")
-                        putExtra(Intent.EXTRA_SUBJECT, "[Fülelő] ${n.docCode.ifBlank { n.subject }} - ${n.dateIso}")
+                        putExtra(Intent.EXTRA_SUBJECT, "[AssiSten-s] ${n.docCode.ifBlank { n.subject }} - ${n.dateIso}")
                         putExtra(Intent.EXTRA_TEXT, fullText())
                     }
                     ctx.startActivity(Intent.createChooser(intent, "E-mail küldése"))
@@ -525,17 +532,6 @@ fun NoteDetailScreen(noteId: Long, onBack: () -> Unit) {
             try {
                 val s = Settings.get(ctx)
                 val sourceText = n.transcript.ifBlank { n.summary }
-                val gemmaFile = File(ctx.filesDir, "models/gemma.task")
-
-                val isOnlineAvailable = s.geminiApiKey.isNotBlank()
-                val isGemmaAvailable = s.useGemma && gemmaFile.exists()
-
-                if (!isOnlineAvailable && !isGemmaAvailable && (type == "Jegyzőkönyv" || type == "Teendők")) {
-                    alertMessage = "Ehhez Gemini API-kulcs vagy telepített Gemma modell szükséges."
-                    customSummaryResult = null
-                    return@launch
-                }
-
                 val promptInstruction = when (type) {
                     "Vezetői" -> "Készíts asszertív hivatali és vezetői stílusú, határozott összefoglalót (fő döntések, stratégia, kötelezettségek)."
                     "Jegyzőkönyv" -> "Készíts szigorúan asszertív hivatali jegyzőkönyvet (napirend, elhangzottak, hivatalos határozatok és felelősök)."
@@ -543,36 +539,52 @@ fun NoteDetailScreen(noteId: Long, onBack: () -> Unit) {
                     else -> "Készíts strukturált, asszertív hivatali hangvételű jegyzetet és összefoglalót."
                 }
 
-                val resultText = when {
-                    isOnlineAvailable -> {
+                val offline = OfflinePipeline(
+                    ctx,
+                    useGemma = s.useGemma,
+                    whisperThreads = s.whisperThreads,
+                    keepWarm = s.keepModelWarm,
+                    warmMinutes = s.warmMinutes,
+                    summaryBlockChars = s.summaryBlockChars,
+                    chunkSec = s.whisperChunkSec,
+                    overlapSec = s.whisperOverlapSec,
+                    onProgress = { p -> customSummaryResult = "$p …" }
+                )
+
+                // 1) Gemini, ha a mód engedi ÉS most tényleg van hálózat; hibánál Gemma.
+                var label = type
+                var warning: String? = null
+                val resultText: String = if (hu.orajegyzet.ai.ModeSelector.canUseGeminiNow(ctx, s)) {
+                    try {
                         val fullPrompt = "$promptInstruction\n\nSzöveg:\n$sourceText"
-                        val pipeline = GeminiPipeline(s.geminiApiKey, s.geminiModel)
-                        pipeline.resummarize(fullPrompt, n.subject, n.dateIso, false).summary
+                        val r = GeminiPipeline(s.geminiApiKey, s.geminiModel)
+                            .resummarize(fullPrompt, n.subject, n.dateIso, false).summary
+                        label = "$type · ☁ Gemini"
+                        r
+                    } catch (e: Exception) {
+                        val st = if (s.useGemma) offline.gemmaStyle(promptInstruction, sourceText)
+                            else OfflinePipeline.StyleResult(Extractive.summarize(sourceText, 6),
+                                hu.orajegyzet.ai.SummaryEngine.EXTRACTIVE, "A Gemma ki van kapcsolva.")
+                        warning = "A Gemini nem volt elérhető (${e.message}), offline készült." +
+                            (st.warning?.let { " $it" } ?: "")
+                        label = "$type · ${hu.orajegyzet.ai.SummaryEngine.label(st.engine)}"
+                        st.text
                     }
-                    isGemmaAvailable -> {
-                        val offlinePipeline = OfflinePipeline(
-                            ctx,
-                            useGemma = true,
-                            whisperThreads = s.whisperThreads,
-                            keepWarm = s.keepModelWarm,
-                            warmMinutes = s.warmMinutes,
-                            summaryBlockChars = s.summaryBlockChars,
-                            chunkSec = s.whisperChunkSec,
-                            overlapSec = s.whisperOverlapSec
-                        )
-                        offlinePipeline.gemmaStyle(promptInstruction, sourceText)
-                    }
-                    else -> {
-                        selectedCustomPrompt = "$type — Kivonat (AI nélkül)"
-                        Extractive.summarize(sourceText, 6)
-                    }
+                } else if (s.useGemma) {
+                    val st = offline.gemmaStyle(promptInstruction, sourceText)
+                    warning = st.warning
+                    label = "$type · ${hu.orajegyzet.ai.SummaryEngine.label(st.engine)}"
+                    st.text
+                } else {
+                    warning = "A Gemma ki van kapcsolva, és most nincs Gemini (hálózat/kulcs/mód) – kivonat készült."
+                    label = "$type · Kivonat (nem AI)"
+                    Extractive.summarize(sourceText, 6)
                 }
 
-                if (OfflinePipeline.echoesPrompt(resultText, promptInstruction)) {
-                    customSummaryResult = "Az összefoglaló nem sikerült, próbáld újra."
-                } else {
-                    customSummaryResult = resultText
-                }
+                selectedCustomPrompt = label
+                customSummaryResult = if (OfflinePipeline.echoesPrompt(resultText, promptInstruction))
+                    "Az összefoglaló nem sikerült, próbáld újra."
+                else resultText + (warning?.let { "\n\n_⚠️ ${it}_" } ?: "")
             } catch (e: Exception) {
                 customSummaryResult = "Hiba: ${e.message}"
             } finally {
@@ -586,9 +598,29 @@ fun NoteDetailScreen(noteId: Long, onBack: () -> Unit) {
     }) { pad ->
         LazyColumn(Modifier.padding(pad).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             item {
-                Text("${n.subject} · ${n.dateIso} · ${fmt(n.startMin)}–${fmt(n.endMin)}" +
-                    (n.processedOnline?.let { if (it) " · online" else " · offline" } ?: ""),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
+                Column {
+                    Text("${n.subject} · ${n.dateIso} · ${fmt(n.startMin)}–${fmt(n.endMin)}" +
+                        (n.processedOnline?.let { if (it) " · online" else " · offline" } ?: ""),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
+                    if (n.summaryEngine != null) {
+                        Spacer(Modifier.height(4.dp))
+                        EngineBadge(n.summaryEngine)
+                    }
+                }
+            }
+            if (!n.summaryWarning.isNullOrBlank() && n.status == NoteStatus.DONE) {
+                item {
+                    Card(colors = CardDefaults.cardColors(containerColor = Color(0xFFFFF4CE))) {
+                        Column(Modifier.fillMaxWidth().padding(12.dp)) {
+                            Text("⚠️ ${n.summaryWarning}", fontSize = 13.sp, color = Color(0xFF5C4400))
+                            Spacer(Modifier.height(6.dp))
+                            OutlinedButton(onClick = {
+                                scope.launch { db.noteDao().update(n.copy(status = NoteStatus.PROCESSING, error = "")) }
+                                ProcessingWorker.resummarize(ctx, n.id)
+                            }) { Text("Összefoglaló újra") }
+                        }
+                    }
+                }
             }
 
             if (!editing) {
@@ -736,7 +768,7 @@ fun NoteDetailScreen(noteId: Long, onBack: () -> Unit) {
                 }
             } else {
                 if (n.status == NoteStatus.PROCESSING || n.status == NoteStatus.QUEUED) {
-                    item { ProcessingIndicator() }
+                    item { ProcessingIndicator(label = n.progress) }
                 }
                 if (n.summary.isNotBlank()) {
                     item { Text("Összefoglaló", fontWeight = FontWeight.Medium, fontSize = 18.sp) }

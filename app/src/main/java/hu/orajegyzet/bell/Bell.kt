@@ -5,13 +5,17 @@ import android.app.Notification
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.BroadcastReceiver
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.os.Build
 import hu.orajegyzet.App
 import hu.orajegyzet.MainActivity
 import hu.orajegyzet.data.Db
 import hu.orajegyzet.data.LessonDao
+import hu.orajegyzet.data.Settings
+import hu.orajegyzet.widget.LessonWidgetReceiver
 import hu.orajegyzet.rec.RecordingService
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -32,10 +36,17 @@ object BellScheduler {
     private const val REQ_START_BASE = 10_000
     private const val REQ_STOP_BASE = 20_000
 
-    /** A következő 7 nap összes órájára beállítja a kezdés- és vég-ébresztőket. */
+    /**
+     * A következő 7 nap összes órájára beállítja a kezdés- és vég-ébresztőket.
+     * Kikapcsolt iskolai módban (1.0.4) minden csengetést töröl, és nem ütemez újat.
+     */
     suspend fun rescheduleAll(ctx: Context, dao: LessonDao) {
         val am = ctx.getSystemService(AlarmManager::class.java)
         val lessons = dao.allOnce()
+        if (!Settings.get(ctx).schoolMode) {
+            cancelAll(ctx, am, lessons.map { it.id })
+            return
+        }
         val now = LocalDateTime.now()
         for (l in lessons) {
             // a hét megfelelő napjának következő előfordulása
@@ -52,6 +63,17 @@ object BellScheduler {
                 }
                 date = date.plusDays(1)
             }
+        }
+    }
+
+    private fun cancelAll(ctx: Context, am: AlarmManager, lessonIds: List<Long>) {
+        for (id in lessonIds) {
+            listOf(
+                PendingIntent.getBroadcast(ctx, REQ_START_BASE + id.toInt(), startIntent(ctx, id),
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE),
+                PendingIntent.getBroadcast(ctx, REQ_STOP_BASE + id.toInt(), stopIntent(ctx, id),
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+            ).forEach { pi -> runCatching { am.cancel(pi); pi.cancel() } }
         }
     }
 
@@ -84,7 +106,7 @@ class BellReceiver : BroadcastReceiver() {
         CoroutineScope(Dispatchers.Default).launch {
             try {
                 when (intent.action) {
-                    ACTION_BELL_START -> showStartNotification(ctx, lessonId)
+                    ACTION_BELL_START -> if (Settings.get(ctx).schoolMode) showStartNotification(ctx, lessonId)
                     ACTION_BELL_STOP -> {
                         // Futó FGS mellett az app előtérben van, így küldhetünk stop-parancsot.
                         ctx.startService(
@@ -125,6 +147,22 @@ class BellReceiver : BroadcastReceiver() {
     companion object {
         const val ACTION_BELL_START = "hu.orajegyzet.BELL_START"
         const val ACTION_BELL_STOP = "hu.orajegyzet.BELL_STOP"
+    }
+}
+
+/** Iskolai mód (1.0.4): órarend, csengetés és widget be/ki. Az órarendi adatok megmaradnak. */
+object SchoolMode {
+    suspend fun apply(ctx: Context) {
+        val enabled = Settings.get(ctx).schoolMode
+        runCatching {
+            ctx.packageManager.setComponentEnabledSetting(
+                ComponentName(ctx, LessonWidgetReceiver::class.java),
+                if (enabled) PackageManager.COMPONENT_ENABLED_STATE_ENABLED
+                else PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
+                PackageManager.DONT_KILL_APP
+            )
+        }
+        BellScheduler.rescheduleAll(ctx, Db.get(ctx).lessonDao())
     }
 }
 

@@ -3,7 +3,6 @@ package hu.orajegyzet
 import android.app.Application
 import android.app.NotificationChannel
 import android.app.NotificationManager
-import hu.orajegyzet.bell.BellScheduler
 import hu.orajegyzet.data.Db
 import hu.orajegyzet.data.ProjectSeed
 import hu.orajegyzet.data.Settings
@@ -23,7 +22,23 @@ class App : Application() {
         appScope.launch {
             runCatching { Settings.migrateSecretsIfNeeded(this@App) }
             ProjectSeed.seedIfNeeded(this@App)
-            BellScheduler.rescheduleAll(this@App, Db.get(this@App).lessonDao())
+            // 1.0.4: iskolai mód kezdőértéke (frissítéskor: be, ha van felvitt óra), majd alkalmazása
+            runCatching {
+                val hasLessons = Db.get(this@App).lessonDao().allOnce().isNotEmpty()
+                Settings.initSchoolModeIfMissing(this@App, hasLessons)
+            }
+            runCatching { hu.orajegyzet.bell.SchoolMode.apply(this@App) }
+            // 1.0.4: az 1.0.3 által eredeti néven mentett Gemma átnevezése a rögzített névre
+            runCatching {
+                hu.orajegyzet.ai.GemmaModel.migrateLegacyName(this@App)?.let { orig ->
+                    Settings.setGemmaModelName(this@App, orig)
+                }
+            }
+            // 1.0.4: a Vosk kikerült – a régi modell törlése (helyfelszabadítás)
+            runCatching {
+                if (hu.orajegyzet.ui.ModelImporter.deleteLegacyVosk(this@App))
+                    android.util.Log.i("FuleloAI", "régi Vosk-modell törölve")
+            }
             DigestWorker.schedule(this@App)
             // korábbi futásból "feldolgozás alatt" ragadt jegyzetek feloldása
             runCatching { Db.get(this@App).noteDao().failStuckProcessing() }
@@ -44,7 +59,7 @@ class App : Application() {
         )
         nm.createNotificationChannel(
             NotificationChannel(CH_REC, "Felvétel", NotificationManager.IMPORTANCE_LOW).apply {
-                description = "Folyamatban lévő órai felvétel"
+                description = "Folyamatban lévő felvétel és feldolgozás"
             }
         )
         nm.createNotificationChannel(

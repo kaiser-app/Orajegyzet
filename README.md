@@ -1,10 +1,13 @@
-# ÓraJegyzet — Android jegyzetelő app diákoknak
+# AssiSten-s — megbeszélés-rögzítő és projektasszisztens (Android)
+
+> Korábbi neve: Fülelő / ÓraJegyzet. A belső azonosító (`hu.orajegyzet`) változatlan,
+> így a frissítés megtartja a meglévő adatokat. Változások: lásd `CHANGELOG.md`.
 
 Automatikus órai jegyzetelő: becsengetéskor értesítés, egy koppintásra felvétel,
 kicsengetéskor automatikus leállás, majd leirat + strukturált jegyzet + összefoglaló.
 Nap végén email-kivonat. **Két választható feldolgozási mód:**
 
-- **Offline** — Vosk (magyar STT) + Gemma (MediaPipe LLM Inference) a készüléken.
+- **Offline** — Whisper (magyar STT) + Gemma (MediaPipe LLM Inference) a készüléken.
   A hang soha nem hagyja el a telefont.
 - **Online** — Gemini Flash-Lite: a hangfájlból egyetlen API-hívás készít
   leiratot és jegyzetet, majd a fájl törlődik a felhőből.
@@ -38,40 +41,35 @@ után minden helyben fut.
 ### 3a. Whisper magyar beszédfelismerő modell (AJÁNLOTT — a legjobb magyar minőség)
 
 Az offline felismerés elsődleges motorja a Whisper (large-v3-turbo), ami magyarul
-lényegesen pontosabb a Vosknál. A Poco F7 Pro elbírja.
+magyarul nagyon pontos. A Poco F7 Pro elbírja.
 
 1. A **telefon böngészőjével** töltsd le a ggml modellt a whisper.cpp gyűjteményből:
    https://huggingface.co/ggerganov/whisper.cpp/tree/main
    - Legjobb minőség: `ggml-large-v3-turbo.bin` (~1,6 GB)
    - Kíméletesebb (kvantált, szinte ugyanolyan jó, gyorsabb): `ggml-large-v3-turbo-q5_0.bin` (~575 MB)
 2. App → Beállítások → **„Whisper modell (.bin) importálása"** → válaszd ki a letöltött
-   fájlt. A státusz „telepítve ✓"-re vált. Ha a Whisper telepítve van, az app
-   automatikusan azt használja a Vosk helyett.
+   fájlt. A státusz „telepítve ✓"-re vált.
 
-### 3a-alt. Vosk magyar modell (tartalék, opcionális)
-
-Ha nem akarsz nagy Whisper-modellt letölteni, a Vosk kisebb, de gyengébb:
-1. Töltsd le: https://alphacephei.com/vosk/models → `vosk-model-small-hu-0.22.zip` (~50 MB)
-2. App → Beállítások → **„Vosk .zip"** → válaszd ki. A Whisper hiányában ezt használja.
+> A Vosk 1.0.4-től kikerült az appból; a régi Vosk-modell indításkor törlődik.
 
 ### 3b. Gemma modell az összefoglalóhoz (ajánlott, de opcionális)
 
-Gemma nélkül az offline mód leiratot ad, összefoglaló nélkül.
+Gemma nélkül az offline mód leiratot és kivonatos (nem AI) összefoglalót ad, „Kivonat (nem AI)" jelvénnyel.
 
 1. A telefon böngészőjével tölts le egy MediaPipe-kompatibilis `.task`
    formátumú Gemma modellt (pl. Gemma 3 4B int4 a Poco F7 Pro-ra, 1B gyengébb
    készülékre) — a forrásokat a MediaPipe LLM Inference dokumentáció sorolja:
    https://ai.google.dev/edge/mediapipe/solutions/genai/llm_inference
    (A letöltéshez Kaggle/Hugging Face fiók és a Gemma licenc elfogadása kellhet.)
-2. App → Beállítások → **„Gemma .task importálása"** → válaszd ki a fájlt.
-
-*(Fejlesztőknek az adb-s push továbbra is működik alternatívaként:
-`files/models/vosk-hu` ill. `files/models/gemma.task` a célhelyek.)*
+2. App → Beállítások → Modellek → **„Gemma modell (.task) importálása"** → válaszd ki a fájlt.
+   Az app a fejléc alapján ellenőrzi a formátumot, rögzített néven menti
+   (`files/models/gemma.task` / `gemma.bin`), és próbabetöltést végez.
+   A Gemma 4 (`.litertlm`) az 1.1-es verziótól lesz támogatott.
 
 ### 3c. Megjegyzés a felismerő motorokról
 
-A felismerés sorrendje automatikus: ha a Whisper modell telepítve van, azt
-használja (legjobb magyar minőség); különben a Vosk a tartalék.
+Az offline beszédfelismerő a Whisper; ha nincs telepítve, az offline feldolgozás
+érthető hibaüzenettel áll le.
 
 **FONTOS — a Whisper forrásból fordul, magyarra állítva.** A `:whispercore`
 modul a whisper.cpp-t tartalmazza, és a `jni.c`-ben a nyelv magyarra van

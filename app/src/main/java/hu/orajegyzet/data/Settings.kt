@@ -91,7 +91,8 @@ data class AppSettings(
     val smtpPass: String = "",              // Gmail esetén alkalmazásjelszó!
     val digestHour: Int = 18,
     val secretsLost: Boolean = false,
-    val gemmaModelName: String = ""
+    val gemmaModelName: String = "",
+    val schoolMode: Boolean = false         // iskolai mód: órarend, csengetés, widget (1.0.4)
 )
 
 private val Context.ds by preferencesDataStore("settings")
@@ -118,6 +119,7 @@ object Settings {
     private val SPASS = stringPreferencesKey("spass")
     private val DHOUR = intPreferencesKey("dhour")
     private val GEMMA_MODEL_NAME = stringPreferencesKey("gemma_model_name")
+    private val SCHOOL_MODE = booleanPreferencesKey("school_mode")
 
     suspend fun migrateSecretsIfNeeded(ctx: Context) {
         try {
@@ -167,11 +169,30 @@ object Settings {
             smtpPass = spass,
             digestHour = p[DHOUR] ?: 18,
             secretsLost = SecretCipher.secretsLost,
-            gemmaModelName = p[GEMMA_MODEL_NAME] ?: ""
+            gemmaModelName = p[GEMMA_MODEL_NAME] ?: "",
+            schoolMode = p[SCHOOL_MODE] ?: false
         )
     }
 
     suspend fun get(ctx: Context): AppSettings = flow(ctx).first()
+
+    /** Csak a Gemma-modell eredeti nevét írja (a titkos mezőkhöz nem nyúl). */
+    suspend fun setGemmaModelName(ctx: Context, name: String) {
+        ctx.ds.edit { p -> p[GEMMA_MODEL_NAME] = name }
+    }
+
+    /**
+     * Az iskolai mód kezdőértéke frissítéskor: ha még nincs beállítva, akkor bekapcsolt,
+     * ha van felvitt óra, különben kikapcsolt. Visszaadja az érvényes értéket.
+     */
+    suspend fun initSchoolModeIfMissing(ctx: Context, hasLessons: Boolean): Boolean {
+        var result = hasLessons
+        ctx.ds.edit { p ->
+            val cur = p[SCHOOL_MODE]
+            if (cur == null) p[SCHOOL_MODE] = hasLessons else result = cur
+        }
+        return result
+    }
 
     suspend fun save(ctx: Context, s: AppSettings) {
         var secretError: SecretStorageException? = null
@@ -191,6 +212,7 @@ object Settings {
             encSpass?.let { p[SPASS] = it }
             p[DHOUR] = s.digestHour
             p[GEMMA_MODEL_NAME] = s.gemmaModelName
+            p[SCHOOL_MODE] = s.schoolMode
         }
         if (secretError == null) SecretCipher.secretsLost = false
         secretError?.let { throw it }

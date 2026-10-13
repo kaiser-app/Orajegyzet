@@ -15,8 +15,8 @@ android {
         applicationId = "hu.orajegyzet"
         minSdk = 26
         targetSdk = 36
-        versionCode = 5
-        versionName = "1.0.3"
+        versionCode = 6
+        versionName = "1.0.4"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk { abiFilters.clear(); abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
     }
@@ -87,7 +87,7 @@ android {
     applicationVariants.all {
         outputs.configureEach {
             (this as? BaseVariantOutputImpl)?.outputFileName =
-                "OraJegyzet-v${versionName}-${buildType.name}.apk"
+                "AssiSten-s-${versionName}-${buildType.name}.apk"
         }
     }
 }
@@ -133,9 +133,7 @@ dependencies {
     // HTTP (Gemini API)
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
-    // Offline STT (Vosk) — magyar modell külön letöltendő, lásd README
-    implementation("com.alphacephei:vosk-android:0.3.47")
-    implementation("net.java.dev.jna:jna:5.13.0@aar")
+    // A Vosk (és a JNA) 1.0.4-től kikerült: a helyi beszédfelismerő a Whisper.
 
     // Offline STT (Whisper, large-v3-turbo) — helyi forrás-modul, magyarra patchelve
     // (jni.c: params.language = "hu"). Natív fordítás NDK + CMake szükséges.

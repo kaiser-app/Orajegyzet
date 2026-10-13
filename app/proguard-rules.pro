@@ -1,9 +1,5 @@
-# --- Natív hidak (JNI/JNA) – a natív kód név szerint keresi ezeket ---
--keep class org.vosk.** { *; }
--keep class com.sun.jna.** { *; }
--keepclassmembers class * extends com.sun.jna.** { public *; }
+# --- Natív hidak (JNI) – a natív kód név szerint keresi ezeket ---
 -dontwarn java.awt.**
--dontwarn com.sun.jna.**
 -keep class com.redravencomputing.whispercore.** { *; }
 -keepclasseswithmembernames class * { native <methods>; }
 

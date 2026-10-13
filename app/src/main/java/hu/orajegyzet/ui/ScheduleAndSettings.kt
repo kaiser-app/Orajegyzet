@@ -197,28 +197,26 @@ fun SettingsScreen(onBack: () -> Unit) {
     // --- Offline modellek importálása fájlválasztóval (adb nem szükséges) ---
     var modelStatus by remember { mutableStateOf(ModelImporter.status(ctx)) }
     var importing by remember { mutableStateOf<String?>(null) }
+    var modelMessage by remember { mutableStateOf<String?>(null) }
+    var modelError by remember { mutableStateOf<String?>(null) }
+    val snackbarHostState = remember { SnackbarHostState() }
 
     val gemmaPicker = androidx.activity.compose.rememberLauncherForActivityResult(
         androidx.activity.result.contract.ActivityResultContracts.OpenDocument()
     ) { uri ->
         uri?.let {
-            importing = "Gemma importálása…"
+            importing = "Gemma importálása és próbabetöltése…"
+            modelMessage = null; modelError = null
             scope.launch(kotlinx.coroutines.Dispatchers.IO) {
-                runCatching { ModelImporter.importGemma(ctx, it) }
+                ModelImporter.runCatching { importGemma(ctx, it) }
+                    .onSuccess { r ->
+                        modelMessage = "✅ Gemma betöltve: ${r.originalName}, " +
+                            "%.0f MB, betöltés %.1f mp".format(r.sizeBytes / 1_000_000.0, r.loadSeconds)
+                    }
+                    .onFailure { e -> modelError = e.message ?: "Ismeretlen hiba az importálásnál." }
                 modelStatus = ModelImporter.status(ctx)
                 importing = null
-            }
-        }
-    }
-    val voskPicker = androidx.activity.compose.rememberLauncherForActivityResult(
-        androidx.activity.result.contract.ActivityResultContracts.OpenDocument()
-    ) { uri ->
-        uri?.let {
-            importing = "Vosk kicsomagolása…"
-            scope.launch(kotlinx.coroutines.Dispatchers.IO) {
-                runCatching { ModelImporter.importVoskZip(ctx, it) }
-                modelStatus = ModelImporter.status(ctx)
-                importing = null
+                (modelError ?: modelMessage)?.let { msg -> snackbarHostState.showSnackbar(msg) }
             }
         }
     }
@@ -227,10 +225,14 @@ fun SettingsScreen(onBack: () -> Unit) {
     ) { uri ->
         uri?.let {
             importing = "Whisper modell másolása… (nagy fájl, eltarthat)"
+            modelMessage = null; modelError = null
             scope.launch(kotlinx.coroutines.Dispatchers.IO) {
-                runCatching { ModelImporter.importWhisper(ctx, it) }
+                ModelImporter.runCatching { importWhisper(ctx, it) }
+                    .onSuccess { modelMessage = "✅ Whisper modell telepítve." }
+                    .onFailure { e -> modelError = e.message ?: "Ismeretlen hiba az importálásnál." }
                 modelStatus = ModelImporter.status(ctx)
                 importing = null
+                (modelError ?: modelMessage)?.let { msg -> snackbarHostState.showSnackbar(msg) }
             }
         }
     }
@@ -258,8 +260,6 @@ fun SettingsScreen(onBack: () -> Unit) {
             }
         )
     }
-
-    val snackbarHostState = remember { SnackbarHostState() }
 
     Scaffold(
         topBar = {
@@ -307,7 +307,20 @@ fun SettingsScreen(onBack: () -> Unit) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Switch(checked = s.useGemma, onCheckedChange = { s = s.copy(useGemma = it) })
                         Spacer(Modifier.width(8.dp))
-                        Text("Gemma összefoglaló offline módban (ki: csak leirat)")
+                        Text("Gemma összefoglaló offline módban (ki: csak kivonat)")
+                    }
+                }
+            }
+            item {
+                Card {
+                    Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("Iskolai mód (órarend, csengetés, widget)", fontWeight = FontWeight.Medium,
+                                modifier = Modifier.weight(1f))
+                            Switch(checked = s.schoolMode, onCheckedChange = { s = s.copy(schoolMode = it) })
+                        }
+                        Text("Kikapcsolva az órarend és a csengetés rejtve van, az adatok megmaradnak.",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
                     }
                 }
             }
@@ -437,12 +450,15 @@ fun SettingsScreen(onBack: () -> Unit) {
                     Text(
                         "Whisper (magyar beszédfelismerés): " +
                             (if (modelStatus.whisperInstalled) "telepítve ✓" else "nincs telepítve") +
-                            "\nVosk (tartalék): " +
-                            (if (modelStatus.voskInstalled) "telepítve ✓" else "nincs telepítve") +
                             "\nGemma (összefoglaló): " +
-                            (if (modelStatus.gemmaInstalled) "telepítve ✓" else "nincs telepítve"),
+                            (if (modelStatus.gemmaInstalled)
+                                "telepítve ✓ – ${s.gemmaModelName.ifBlank { modelStatus.gemmaFileName ?: "" }}, " +
+                                    "%.0f MB".format(modelStatus.gemmaSizeBytes / 1_000_000.0)
+                            else "nincs telepítve"),
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                    modelMessage?.let { Text(it, fontSize = 13.sp, color = MaterialTheme.colorScheme.primary) }
+                    modelError?.let { Text("❌ $it", fontSize = 13.sp, color = MaterialTheme.colorScheme.error) }
                     importing?.let {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
@@ -453,15 +469,9 @@ fun SettingsScreen(onBack: () -> Unit) {
                         modifier = Modifier.fillMaxWidth(), enabled = importing == null) {
                         Text("Whisper modell (.bin) importálása")
                     }
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedButton(onClick = { voskPicker.launch(arrayOf("application/zip", "application/octet-stream")) },
-                            modifier = Modifier.weight(1f), enabled = importing == null) {
-                            Text("Vosk .zip")
-                        }
-                        OutlinedButton(onClick = { gemmaPicker.launch(arrayOf("*/*")) },
-                            modifier = Modifier.weight(1f), enabled = importing == null) {
-                            Text("Gemma .task")
-                        }
+                    OutlinedButton(onClick = { gemmaPicker.launch(arrayOf("*/*")) },
+                        modifier = Modifier.fillMaxWidth(), enabled = importing == null) {
+                        Text("Gemma modell (.task) importálása")
                     }
                     Text("Magyarra a Whisper large-v3-turbo q5_0 modellt ajánljuk (README-link). " +
                         "Gemma: Utasításra hangolt (-it) Gemma 3 .task modellt használj, pl. gemma3-1b-it-int4.task.",
@@ -474,6 +484,10 @@ fun SettingsScreen(onBack: () -> Unit) {
                         try {
                             Settings.save(ctx, s)
                             DigestWorker.schedule(ctx)
+                            // az App saját scope-jában, hogy a képernyő bezárása ne szakítsa meg
+                            (ctx.applicationContext as hu.orajegyzet.App).appScope.launch {
+                                runCatching { hu.orajegyzet.bell.SchoolMode.apply(ctx.applicationContext) }
+                            }
                             onBack()
                         } catch (e: SecretStorageException) {
                             snackbarHostState.showSnackbar("Az API-kulcsot nem sikerült biztonságosan elmenteni. Próbáld újra, vagy indítsd újra a telefont.")

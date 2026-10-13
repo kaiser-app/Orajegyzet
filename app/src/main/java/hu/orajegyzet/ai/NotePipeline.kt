@@ -17,8 +17,28 @@ data class NoteResult(
     val structured: String,
     val keywords: List<String>,
     val decisions: List<ProjectEventEntity> = emptyList(),
-    val tasks: List<GanttTaskEntity> = emptyList()
+    val tasks: List<GanttTaskEntity> = emptyList(),
+    /** Mi készítette az összefoglalót: GEMMA | GEMINI | EXTRACTIVE | TEMPLATE (1.0.4). */
+    val engine: String? = null,
+    /** Felhasználónak szóló figyelmeztetés (pl. miért nem futott a Gemma). */
+    val warning: String? = null
 )
+
+/** Az összefoglaló forrásának azonosítói (a Note.summaryEngine mezőbe kerülnek). */
+object SummaryEngine {
+    const val GEMMA = "GEMMA"
+    const val GEMINI = "GEMINI"
+    const val EXTRACTIVE = "EXTRACTIVE"
+    const val TEMPLATE = "TEMPLATE"
+
+    fun label(engine: String?): String? = when (engine) {
+        GEMMA -> "📱 Gemma"
+        GEMINI -> "☁ Gemini"
+        EXTRACTIVE -> "Kivonat (nem AI)"
+        TEMPLATE -> "Offline vázlat"
+        else -> null
+    }
+}
 
 /** Egy hangfájl → jegyzet feldolgozó. Két implementáció: Offline és Gemini. */
 interface NotePipeline {
@@ -45,7 +65,16 @@ object ModeSelector {
         }
     }
 
-    private fun hasNetwork(ctx: Context, wifiOnly: Boolean): Boolean {
+    /**
+     * Interaktív (felhasználó által indított) AI-hívásokhoz: csak akkor online, ha a mód
+     * megengedi ÉS ténylegesen van (megfelelő) hálózat — „Online" módban is ellenőriz.
+     */
+    fun canUseGeminiNow(ctx: Context, s: AppSettings): Boolean {
+        if (s.privacyLock || s.geminiApiKey.isBlank() || s.mode == Mode.OFFLINE) return false
+        return hasNetwork(ctx, s.wifiOnly)
+    }
+
+    fun hasNetwork(ctx: Context, wifiOnly: Boolean): Boolean {
         val cm = ctx.getSystemService(ConnectivityManager::class.java)
         val caps = cm.getNetworkCapabilities(cm.activeNetwork) ?: return false
         if (!caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)) return false

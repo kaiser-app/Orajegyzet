@@ -14,6 +14,8 @@ import hu.orajegyzet.R
 import hu.orajegyzet.ai.GeminiPipeline
 import hu.orajegyzet.ai.ModeSelector
 import hu.orajegyzet.ai.OfflinePipeline
+import hu.orajegyzet.ai.SummaryEngine
+import android.util.Log
 import hu.orajegyzet.data.Db
 import hu.orajegyzet.data.NoteStatus
 import hu.orajegyzet.data.Settings
@@ -56,25 +58,37 @@ class ProcessingWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker
         val resummarize = inputData.getBoolean(KEY_RESUMMARIZE, false)
 
         val audio = note.audioPath?.let { File(it) }
+        var lastStep: String? = null
+        val step: suspend (String) -> Unit = { text ->
+            lastStep = text
+            runCatching { dao.setProgress(noteId, text) }
+        }
+        Log.i("FuleloAI", "route=${if (online) "GEMINI model=${settings.geminiModel}" else "OFFLINE"} " +
+            "mode=${settings.mode} privacy=${settings.privacyLock} key=${settings.geminiApiKey.isNotBlank()}")
 
         // ÚJRA-ÖSSZEFOGLALÁS / HANG FELDOLGOZÁS:
         // Ha van leirat, arról dolgozik. Ha nincs leirat, de megvan a hangfájl, átvált teljes hangfeldolgozásra!
         if (resummarize && note.transcript.isNotBlank()) {
-            dao.update(note.copy(status = NoteStatus.PROCESSING))
+            dao.update(note.copy(status = NoteStatus.PROCESSING,
+                progress = if (online) "Összefoglaló: Gemini" else "Összefoglaló előkészítése…"))
             return try {
                 val pipeline = if (online)
                     GeminiPipeline(settings.geminiApiKey, settings.geminiModel)
-                else OfflinePipeline(applicationContext, settings.useGemma)
-                val r = withTimeout(8 * 60_000L) {
+                else OfflinePipeline(applicationContext, settings.useGemma,
+                    summaryBlockChars = settings.summaryBlockChars, onProgress = step)
+                val r = withTimeout(12 * 60_000L) {
                     pipeline.resummarize(note.transcript, note.subject, dateLabel, note.lessonId != null)
                 }
                 dao.update(note.copy(status = NoteStatus.DONE, summary = r.summary,
-                    structured = r.structured, keywords = r.keywords.joinToString(", "), error = ""))
+                    structured = r.structured, keywords = r.keywords.joinToString(", "), error = "",
+                    summaryEngine = r.engine ?: if (online) SummaryEngine.GEMINI else null,
+                    summaryWarning = r.warning, progress = null))
                 Result.success()
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                dao.update(note.copy(status = NoteStatus.DONE, error = "Újra-összefoglalás hiba: ${e.message}"))
+                dao.update(note.copy(status = NoteStatus.DONE, progress = null,
+                    error = "Újra-összefoglalás hiba: ${e.message}"))
                 Result.failure()
             }
         }
@@ -86,7 +100,8 @@ class ProcessingWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker
             }
         }
 
-        dao.update(note.copy(status = NoteStatus.PROCESSING))
+        dao.update(note.copy(status = NoteStatus.PROCESSING,
+            progress = if (online) "Leirat és elemzés: Gemini (${settings.geminiModel})" else "Leirat előkészítése (Whisper)…"))
 
         return try {
             val r = if (online && audio != null && audio.exists()) {
@@ -97,30 +112,34 @@ class ProcessingWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker
                 var validTranscript = res.transcript
                 if (validTranscript.isBlank()) {
                     runCatching {
+                        step("A Gemini nem adott leiratot – leirat helyben (Whisper)")
                         val offline = OfflinePipeline(
                             applicationContext, false, settings.whisperThreads,
                             settings.keepModelWarm, settings.warmMinutes, settings.summaryBlockChars,
-                            settings.whisperChunkSec, settings.whisperOverlapSec
+                            settings.whisperChunkSec, settings.whisperOverlapSec, step
                         )
                         validTranscript = offline.transcribeOnly(audio.absolutePath)
                     }
                 }
-                res.copy(transcript = validTranscript.ifBlank { note.transcript })
+                res.copy(transcript = validTranscript.ifBlank { note.transcript },
+                    engine = res.engine ?: SummaryEngine.GEMINI)
             } else if (audio != null && audio.exists()) {
                 val pipeline = OfflinePipeline(
                     applicationContext, settings.useGemma, settings.whisperThreads,
                     settings.keepModelWarm, settings.warmMinutes, settings.summaryBlockChars,
-                    settings.whisperChunkSec, settings.whisperOverlapSec)
+                    settings.whisperChunkSec, settings.whisperOverlapSec, step)
                 if (settings.stagedDisplay) {
                     val transcript = withTimeout(30 * 60_000L) {
                         pipeline.transcribeOnly(audio.absolutePath) { partial ->
-                            dao.update(note.copy(transcript = partial, processedOnline = false,
-                                summary = "(leirat készül…)", error = ""))
+                            dao.update(note.copy(status = NoteStatus.PROCESSING, transcript = partial,
+                                processedOnline = false, summary = "(leirat készül…)", error = "",
+                                progress = lastStep))
                         }
                     }
-                    dao.update(note.copy(transcript = transcript, processedOnline = false,
-                        summary = "(összefoglaló készül…)", error = ""))
-                    withTimeout(10 * 60_000L) {
+                    dao.update(note.copy(status = NoteStatus.PROCESSING, transcript = transcript,
+                        processedOnline = false, summary = "(összefoglaló készül…)", error = "",
+                        progress = "Összefoglaló előkészítése…"))
+                    withTimeout(12 * 60_000L) {
                         pipeline.finishSummary(transcript, note.subject, dateLabel, note.lessonId != null)
                     }
                 } else {
@@ -140,7 +159,10 @@ class ProcessingWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker
                     structured = r.structured,
                     keywords = r.keywords.joinToString(", "),
                     processedOnline = online,
-                    error = ""
+                    error = "",
+                    summaryEngine = r.engine,
+                    summaryWarning = r.warning,
+                    progress = null
                 )
             )
 
@@ -159,17 +181,18 @@ class ProcessingWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker
             notifyDone(note.subject, noteId)
             Result.success()
         } catch (e: TimeoutCancellationException) {
-            dao.update(note.copy(status = NoteStatus.ERROR,
-                error = "Offline feldolgozás időtúllépés (8 perc). Próbáld a kisebb q5 Whisper modellt, vagy kapcsold ki a Gemmát a Beállításokban."))
+            dao.update(note.copy(status = NoteStatus.ERROR, progress = null,
+                error = "Offline feldolgozás időtúllépés. Próbáld a kisebb q5 Whisper modellt, vagy kapcsold ki a Gemmát a Beállításokban."))
             Result.failure()
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
             if (runAttemptCount < 2) {
-                dao.update(note.copy(status = NoteStatus.QUEUED, error = e.message ?: "ismeretlen hiba"))
+                dao.update(note.copy(status = NoteStatus.QUEUED, progress = "Újrapróbálás hamarosan…",
+                    error = e.message ?: "ismeretlen hiba"))
                 Result.retry()
             } else {
-                dao.update(note.copy(status = NoteStatus.ERROR, error = e.message ?: "ismeretlen hiba"))
+                dao.update(note.copy(status = NoteStatus.ERROR, progress = null, error = e.message ?: "ismeretlen hiba"))
                 Result.failure()
             }
         }

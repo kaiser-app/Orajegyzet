@@ -83,7 +83,7 @@ class LessonWidget : GlanceAppWidget() {
                 .padding(12.dp)
                 .clickable(openApp)
         ) {
-            Text("Fülelő", style = TextStyle(fontSize = 11.sp,
+            Text("AssiSten-s", style = TextStyle(fontSize = 11.sp,
                 color = ColorProvider(Color(0xFF6E5A1E))))
             Text(title, style = TextStyle(fontSize = 16.sp, fontWeight = FontWeight.Bold,
                 color = ColorProvider(Color(0xFF26215C))))

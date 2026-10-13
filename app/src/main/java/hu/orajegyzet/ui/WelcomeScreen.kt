@@ -44,11 +44,16 @@ fun WelcomeScreen(onEnterApp: () -> Unit, onExitApp: () -> Unit) {
                 }
 
                 Text(
-                    text = "FÜLELŐ",
+                    text = "AssiSten-s",
                     fontSize = 32.sp,
                     fontWeight = FontWeight.Black,
                     color = MaterialTheme.colorScheme.primary,
-                    letterSpacing = 2.sp
+                    letterSpacing = 1.sp
+                )
+                Text(
+                    text = "Megbeszélés-rögzítő és projektasszisztens",
+                    fontSize = 14.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
 
@@ -73,8 +78,8 @@ fun WelcomeScreen(onEnterApp: () -> Unit, onExitApp: () -> Unit) {
                         Text("⚡", fontSize = 24.sp)
                         Spacer(Modifier.width(12.dp))
                         Column {
-                            Text("Gemini 3.x Flash & Hibrid AI", fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                            Text("Szupergyors jegyzet, döntési napló és feladatok kinyerése.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text("Gemma helyben, Gemini felhőben", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                            Text("Összefoglaló, döntések és feladatok – minden eredményen látszik, melyik motor készítette.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
                 }
