@@ -55,9 +55,15 @@ interface NotePipeline {
 /** Eldönti, hogy az adott körülmények között melyik pipeline fusson. */
 object ModeSelector {
 
+    /**
+     * true = Gemini (online), false = helyi (Whisper + Gemma).
+     * 1.1: az alap elemző a Gemma 4; a Gemini csak akkor fut, ha a felhasználó azt választotta
+     * alapnak, vagy ha nincs futtatható Gemma-modell (és a mód/hálózat engedi).
+     */
     fun choose(ctx: Context, s: AppSettings): Boolean /* true = online */ {
         if (s.privacyLock) return false
         if (s.geminiApiKey.isBlank()) return false
+        if (!s.preferGemini && GemmaModel.file(ctx) != null) return false
         return when (s.mode) {
             Mode.OFFLINE -> false
             Mode.ONLINE -> true
@@ -71,6 +77,7 @@ object ModeSelector {
      */
     fun canUseGeminiNow(ctx: Context, s: AppSettings): Boolean {
         if (s.privacyLock || s.geminiApiKey.isBlank() || s.mode == Mode.OFFLINE) return false
+        if (!s.preferGemini && GemmaModel.file(ctx) != null) return false
         return hasNetwork(ctx, s.wifiOnly)
     }
 

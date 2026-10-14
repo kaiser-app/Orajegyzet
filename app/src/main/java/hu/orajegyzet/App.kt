@@ -28,10 +28,12 @@ class App : Application() {
                 Settings.initSchoolModeIfMissing(this@App, hasLessons)
             }
             runCatching { hu.orajegyzet.bell.SchoolMode.apply(this@App) }
-            // 1.0.4: az 1.0.3 által eredeti néven mentett Gemma átnevezése a rögzített névre
+            // 1.1: a régi néven (gemma.task / eredeti név) mentett, de valójában .litertlm Gemma
+            // átnevezése a rögzített gemma.litertlm névre (pl. a korábban betöltött Gemma 4 fájl)
             runCatching {
                 hu.orajegyzet.ai.GemmaModel.migrateLegacyName(this@App)?.let { orig ->
-                    Settings.setGemmaModelName(this@App, orig)
+                    val shown = if (orig in hu.orajegyzet.ai.GemmaModel.LEGACY_NAMES) "Gemma (.litertlm)" else orig
+                    Settings.setGemmaModelName(this@App, shown)
                 }
             }
             // 1.0.4: a Vosk kikerült – a régi modell törlése (helyfelszabadítás)

@@ -7,7 +7,7 @@ Automatikus órai jegyzetelő: becsengetéskor értesítés, egy koppintásra fe
 kicsengetéskor automatikus leállás, majd leirat + strukturált jegyzet + összefoglaló.
 Nap végén email-kivonat. **Két választható feldolgozási mód:**
 
-- **Offline** — Whisper (magyar STT) + Gemma (MediaPipe LLM Inference) a készüléken.
+- **Offline** — Whisper (magyar STT) + Gemma 4 (LiteRT-LM) a készüléken.
   A hang soha nem hagyja el a telefont.
 - **Online** — Gemini Flash-Lite: a hangfájlból egyetlen API-hívás készít
   leiratot és jegyzetet, majd a fájl törlődik a felhőből.
@@ -52,19 +52,20 @@ magyarul nagyon pontos. A Poco F7 Pro elbírja.
 
 > A Vosk 1.0.4-től kikerült az appból; a régi Vosk-modell indításkor törlődik.
 
-### 3b. Gemma modell az összefoglalóhoz (ajánlott, de opcionális)
+### 3b. Gemma 4 modell az összefoglalóhoz (ajánlott)
 
 Gemma nélkül az offline mód leiratot és kivonatos (nem AI) összefoglalót ad, „Kivonat (nem AI)" jelvénnyel.
 
-1. A telefon böngészőjével tölts le egy MediaPipe-kompatibilis `.task`
-   formátumú Gemma modellt (pl. Gemma 3 4B int4 a Poco F7 Pro-ra, 1B gyengébb
-   készülékre) — a forrásokat a MediaPipe LLM Inference dokumentáció sorolja:
-   https://ai.google.dev/edge/mediapipe/solutions/genai/llm_inference
-   (A letöltéshez Kaggle/Hugging Face fiók és a Gemma licenc elfogadása kellhet.)
-2. App → Beállítások → Modellek → **„Gemma modell (.task) importálása"** → válaszd ki a fájlt.
-   Az app a fejléc alapján ellenőrzi a formátumot, rögzített néven menti
-   (`files/models/gemma.task` / `gemma.bin`), és próbabetöltést végez.
-   A Gemma 4 (`.litertlm`) az 1.1-es verziótól lesz támogatott.
+1. A telefon böngészőjével töltsd le a Hugging Face litert-community oldaláról:
+   - **ajánlott:** `gemma-4-E2B-it.litertlm` (2,59 GB) – https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm
+   - kisebb telefonra: `gemma3-1b-it-int4.litertlm` (~0,6 GB) – https://huggingface.co/litert-community/Gemma3-1B-IT
+2. App → Beállítások → Modellek → **„Gemma modell (.litertlm) importálása"** → a **Letöltések** mappából válaszd ki
+   (ne felhőből). Az app ellenőrzi a formátumot és a szabad helyet, rögzített néven menti
+   (`files/models/gemma.litertlm`), és próbabetöltést végez (GPU, ha nem megy, CPU).
+3. **„Gemma modell teszt"**: bármikor megmutatja, működik-e a modell, és mennyi a betöltési/válaszidő.
+
+> A régi MediaPipe `.task` modelleket az 1.1-től nem futtatja; a korábban `gemma.task` néven
+> elmentett Gemma 4 fájlt viszont indításkor magától átnevezi és használja.
 
 ### 3c. Megjegyzés a felismerő motorokról
 

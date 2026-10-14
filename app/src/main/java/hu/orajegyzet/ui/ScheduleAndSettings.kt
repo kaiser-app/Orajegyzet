@@ -211,7 +211,7 @@ fun SettingsScreen(onBack: () -> Unit) {
                 ModelImporter.runCatching { importGemma(ctx, it) }
                     .onSuccess { r ->
                         modelMessage = "✅ Gemma betöltve: ${r.originalName}, " +
-                            "%.0f MB, betöltés %.1f mp".format(r.sizeBytes / 1_000_000.0, r.loadSeconds)
+                            "%.0f MB, betöltés %.1f mp, gyorsító: ".format(r.sizeBytes / 1_000_000.0, r.loadSeconds) + r.backend
                     }
                     .onFailure { e -> modelError = e.message ?: "Ismeretlen hiba az importálásnál." }
                 modelStatus = ModelImporter.status(ctx)
@@ -294,6 +294,18 @@ fun SettingsScreen(onBack: () -> Unit) {
                                 })
                         }
                     }
+                    Text("Alap elemző", fontWeight = FontWeight.Medium)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FilterChip(selected = !s.preferGemini, onClick = { s = s.copy(preferGemini = false) },
+                            label = { Text("Gemma 4 (helyben)") })
+                        FilterChip(selected = s.preferGemini, onClick = { s = s.copy(preferGemini = true) },
+                            label = { Text("Gemini (felhő)") })
+                    }
+                    Text(
+                        if (s.preferGemini) "A Gemini fut, ha a mód és a hálózat engedi; különben a Gemma 4."
+                        else "A Gemma 4 fut a telefonon; a Gemini csak akkor, ha nincs telepített Gemma-modell.",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp
+                    )
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Switch(checked = s.privacyLock, onCheckedChange = { s = s.copy(privacyLock = it) })
                         Spacer(Modifier.width(8.dp))
@@ -349,10 +361,11 @@ fun SettingsScreen(onBack: () -> Unit) {
             }
             item {
                 SettingSection("Online (Gemini)", expOnline, { expOnline = !expOnline }) {
-                    if (s.privacyLock || s.mode == Mode.OFFLINE) {
+                    if (s.privacyLock || s.mode == Mode.OFFLINE || (!s.preferGemini && modelStatus.gemmaInstalled)) {
                         Text(
                             if (s.privacyLock) "⚠️ Az adatvédelmi zár be van kapcsolva, ezért a Gemini nem fut (minden helyben készül). A Gemini használatához kapcsold ki a zárat a Feldolgozás kártyán."
-                            else "⚠️ Offline mód van kiválasztva, ezért a Gemini nem fut. Válaszd az Online vagy az Automatikus módot.",
+                            else if (s.mode == Mode.OFFLINE) "⚠️ Offline mód van kiválasztva, ezért a Gemini nem fut. Válaszd az Online vagy az Automatikus módot."
+                            else "ℹ️ Az alap elemző a Gemma 4, ezért a Gemini csak kérésre fut (pl. „Újrafogalmazás Geminivel”). Átállítás: Feldolgozás → Alap elemző.",
                             color = MaterialTheme.colorScheme.error, fontSize = 13.sp, fontWeight = FontWeight.Medium
                         )
                     }
@@ -466,7 +479,7 @@ fun SettingsScreen(onBack: () -> Unit) {
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     if (modelStatus.gemmaInvalidSizeBytes > 0) {
-                        Text("❌ A telepített Gemma-fájl (%.0f MB) nem MediaPipe-formátumú – valószínűleg egy korábbi verzióval importált Gemma 4 (.litertlm). Ezt az 1.0.4 nem tudja futtatni; a Gemma 4 az 1.1-ben jön. Töröld, és importálj .task modellt (pl. gemma3-1b-it-int4.task)."
+                        Text("❌ A telepített Gemma-fájl (%.0f MB) nem LiteRT-LM (.litertlm) modell – valószínűleg egy régi MediaPipe .task, vagy sérült/félbeszakadt letöltés. Töröld, és importáld a gemma-4-E2B-it.litertlm fájlt."
                             .format(modelStatus.gemmaInvalidSizeBytes / 1_000_000.0),
                             fontSize = 13.sp, color = MaterialTheme.colorScheme.error)
                         OutlinedButton(onClick = {
@@ -486,7 +499,7 @@ fun SettingsScreen(onBack: () -> Unit) {
                             scope.launch(kotlinx.coroutines.Dispatchers.IO) {
                                 ModelImporter.runCatching { testGemma(ctx) }
                                     .onSuccess { r ->
-                                        modelMessage = "✅ Gemma működik (betöltés %.1f mp, válasz %.1f mp): "
+                                        modelMessage = "✅ Gemma működik – ${r.backend} (betöltés %.1f mp, válasz %.1f mp): "
                                             .format(r.loadSeconds, r.answerSeconds) + r.answer
                                     }
                                     .onFailure { e -> modelError = e.message ?: "Ismeretlen hiba a teszt közben." }
@@ -510,10 +523,11 @@ fun SettingsScreen(onBack: () -> Unit) {
                     }
                     OutlinedButton(onClick = { gemmaPicker.launch(arrayOf("*/*")) },
                         modifier = Modifier.fillMaxWidth(), enabled = importing == null) {
-                        Text("Gemma modell (.task) importálása")
+                        Text("Gemma modell (.litertlm) importálása")
                     }
                     Text("Magyarra a Whisper large-v3-turbo q5_0 modellt ajánljuk (README-link). " +
-                        "Gemma: Utasításra hangolt (-it) Gemma 3 .task modellt használj, pl. gemma3-1b-it-int4.task.",
+                        "Gemma: a Hugging Face litert-community oldaláról a gemma-4-E2B-it.litertlm (2,59 GB) ajánlott; " +
+                        "kisebb telefonra a gemma3-1b-it-int4.litertlm. Előbb töltsd le a telefonra, és a Letöltések mappából válaszd ki.",
                         color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
                 }
             }

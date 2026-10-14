@@ -13,10 +13,10 @@ android {
 
     defaultConfig {
         applicationId = "hu.orajegyzet"
-        minSdk = 26
+        minSdk = 31   // 1.1: a LiteRT-LM (Gemma 4) Android 12+ készüléket igényel
         targetSdk = 36
-        versionCode = 6
-        versionName = "1.0.4"
+        versionCode = 7
+        versionName = "1.1.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk { abiFilters.clear(); abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
     }
@@ -64,7 +64,11 @@ android {
         abortOnError = false
     }
 
-    kotlinOptions { jvmTarget = "17" }
+    kotlinOptions {
+        jvmTarget = "17"
+        // A LiteRT-LM könyvtár újabb Kotlinnal készülhetett; ez engedi a régebbi fordítónak beolvasni.
+        freeCompilerArgs += listOf("-Xskip-metadata-version-check")
+    }
 
     testOptions {
         unitTests.isReturnDefaultValues = true
@@ -76,6 +80,7 @@ android {
         resources.excludes += listOf("META-INF/LICENSE*", "META-INF/NOTICE*")
         jniLibs {
             excludes += listOf("lib/mips/**", "lib/mips64/**", "lib/armeabi/**", "lib/x86/**")
+            pickFirsts += listOf("**/liblitertlm_jni.so")
             useLegacyPackaging = false
         }
     }
@@ -139,8 +144,9 @@ dependencies {
     // (jni.c: params.language = "hu"). Natív fordítás NDK + CMake szükséges.
     implementation(project(":whispercore"))
 
-    // Offline LLM (Gemma a MediaPipe LLM Inference API-n) — modellfájl külön, lásd README
-    implementation("com.google.mediapipe:tasks-genai:0.10.24")
+    // Offline LLM (Gemma 4) a LiteRT-LM motoron — modellfájl (.litertlm) külön, lásd README.
+    // Rögzített verzió: ugyanez fut a Google AI Edge Gallery 1.0.20-ban a Gemma 4 E2B-vel.
+    implementation("com.google.ai.edge.litertlm:litertlm-android:0.11.0")
 
     // Email (SMTP)
     implementation("com.sun.mail:android-mail:1.6.7")

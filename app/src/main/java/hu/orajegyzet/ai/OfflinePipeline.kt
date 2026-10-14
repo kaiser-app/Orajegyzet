@@ -33,8 +33,8 @@ import kotlin.coroutines.resumeWithException
  *  1. M4A → 16 kHz mono PCM dekódolás (MediaCodec)
  *  2. Beszédfelismerés: Whisper (large-v3-turbo) a whisper.cpp wrapperrel
  *     (filesDir/models/whisper.bin). A Vosk 1.0.4-től kikerült.
- *  3. Összefoglaló: Gemma a MediaPipe LLM Inference API-val
- *     (filesDir/models/gemma.task vagy gemma.bin, lásd GemmaModel)
+ *  3. Összefoglaló: Gemma 4 a LiteRT-LM motorral
+ *     (filesDir/models/gemma.litertlm, lásd GemmaModel)
  */
 class OfflinePipeline(
     private val ctx: Context,
@@ -117,7 +117,7 @@ class OfflinePipeline(
     }
 
     /**
-     * Gemma-összefoglaló a 2048 tokenes keret figyelembevételével:
+     * Gemma-összefoglaló a 4000 tokenes keret figyelembevételével:
      *  - ha a teljes szöveg belefér: egyetlen hívás;
      *  - különben blokkonként részösszefoglaló, majd ezekből a végső (map-reduce).
      * A modell a teljes folyamat alatt EGYSZER töltődik be.

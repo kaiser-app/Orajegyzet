@@ -14,20 +14,32 @@ import java.time.LocalDate
 /** Az 1.0.4 új, tiszta logikájának unit tesztjei (P1, P3, P4). */
 class Release104Test {
 
-    // ---------- P1: modellformátum felismerése ----------
+    // ---------- P1 / 1.1: modellformátum felismerése (LiteRT-LM) ----------
 
     private fun bytes(vararg b: Int) = ByteArray(b.size) { b[it].toByte() }
 
-    @Test fun taskHeaderIsAccepted() {
-        val f = GemmaModel.detectFormat(bytes(0x50, 0x4B, 0x03, 0x04, 0, 0, 0, 0))
-        assertEquals(GemmaModel.Format.TASK, f)
+    @Test fun litertlmHeaderIsAccepted() {
+        val f = GemmaModel.detectFormat("LITERTLM".toByteArray(Charsets.ISO_8859_1), "gemma-4-E2B-it.litertlm")
+        assertEquals(GemmaModel.Format.LITERTLM, f)
         assertNull(GemmaModel.rejectionMessage(f))
     }
 
-    @Test fun tfliteHeaderIsAccepted() {
+    @Test fun litertlmHeaderWinsOverWrongFileName() {
+        // pl. a régi verziók „gemma.task" néven mentették a Gemma 4 fájlt
+        assertEquals(GemmaModel.Format.LITERTLM,
+            GemmaModel.detectFormat("LITERTLM".toByteArray(Charsets.ISO_8859_1), "gemma.task"))
+    }
+
+    @Test fun mediapipeTaskIsRejectedWithLitertlmHint() {
+        val f = GemmaModel.detectFormat(bytes(0x50, 0x4B, 0x03, 0x04, 0, 0, 0, 0))
+        assertEquals(GemmaModel.Format.TASK, f)
+        assertTrue(GemmaModel.rejectionMessage(f)!!.contains(".litertlm"))
+    }
+
+    @Test fun mediapipeTfliteIsRejected() {
         val f = GemmaModel.detectFormat(bytes(0x18, 0, 0, 0, 'T'.code, 'F'.code, 'L'.code, '3'.code))
         assertEquals(GemmaModel.Format.TFLITE, f)
-        assertNull(GemmaModel.rejectionMessage(f))
+        assertNotNull(GemmaModel.rejectionMessage(f))
     }
 
     @Test fun whisperGgmlIsRejected() {
@@ -36,16 +48,16 @@ class Release104Test {
         assertTrue(GemmaModel.rejectionMessage(f)!!.contains("Whisper"))
     }
 
-    @Test fun litertlmIsRejectedWithGemma4Message() {
-        val f = GemmaModel.detectFormat(bytes(1, 2, 3, 4, 5, 6, 7, 8), "gemma-4-E2B-it.litertlm")
-        assertEquals(GemmaModel.Format.LITERTLM, f)
-        assertTrue(GemmaModel.rejectionMessage(f)!!.contains("Gemma 4"))
+    @Test fun truncatedLitertlmGetsDownloadHint() {
+        val f = GemmaModel.detectFormat(bytes(0, 0, 0, 0, 0, 0, 0, 0), "gemma-4-E2B-it.litertlm")
+        assertEquals(GemmaModel.Format.UNKNOWN, f)
+        assertTrue(GemmaModel.rejectionMessage(f, "gemma-4-E2B-it.litertlm")!!.contains("letöltés"))
     }
 
     @Test fun unknownIsRejected() {
         val f = GemmaModel.detectFormat(bytes(1, 2, 3, 4, 5, 6, 7, 8), "valami.bin")
         assertEquals(GemmaModel.Format.UNKNOWN, f)
-        assertNotNull(GemmaModel.rejectionMessage(f))
+        assertNotNull(GemmaModel.rejectionMessage(f, "valami.bin"))
     }
 
     // ---------- P4: blokkolás és tokenbecslés ----------
@@ -68,7 +80,8 @@ class Release104Test {
 
     @Test fun tokenEstimateIsAboutFourCharsPerToken() {
         assertEquals(250, GemmaSession.estimateTokens("x".repeat(1000)))
-        assertTrue(GemmaSession.estimateTokens("x".repeat(8000)) + 500 > GemmaSession.MAX_TOKENS)
+        assertEquals(4000, GemmaSession.MAX_TOKENS)
+        assertTrue(GemmaSession.estimateTokens("x".repeat(16000)) + 500 > GemmaSession.MAX_TOKENS)
     }
 
     // ---------- P3: tényblokk és sablonváz ----------

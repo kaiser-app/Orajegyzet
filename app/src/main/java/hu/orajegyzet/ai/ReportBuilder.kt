@@ -26,8 +26,8 @@ object ReportBuilder {
 
     data class Report(val text: String, val engine: String, val warning: String? = null)
 
-    /** A Gemma-promptban a tényblokk legfeljebb ennyi tokent foglalhat (2048-as keretből). */
-    private const val FACT_TOKEN_BUDGET = 1400
+    /** A Gemma-promptban a tényblokk legfeljebb ennyi tokent foglalhat (4000-es keretből). */
+    private const val FACT_TOKEN_BUDGET = 2800
 
     // ---------------- Tiszta függvények (unit teszt) ----------------
 
@@ -74,7 +74,7 @@ object ReportBuilder {
     }
 
     /**
-     * A tényblokk. Ha túl hosszú a Gemma 2048 tokenes keretéhez, a feladatlistát a lejárt és
+     * A tényblokk. Ha túl hosszú a Gemma 4000 tokenes keretéhez, a feladatlistát a lejárt és
      * a 14 napon belül esedékes tételekre rövidíti.
      */
     fun factBlock(type: String, p: ProjectEntity, events: List<ProjectEventEntity>,

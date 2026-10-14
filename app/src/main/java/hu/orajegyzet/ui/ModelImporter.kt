@@ -15,8 +15,8 @@ import java.io.File
  * fájlt a Letöltések mappába, majd itt importálja.
  *
  *  - Whisper: a kiválasztott ggml .bin bemásolása files/models/whisper.bin néven.
- *  - Gemma:   a kiválasztott .task / MediaPipe .bin bemásolása RÖGZÍTETT néven
- *             (files/models/gemma.task vagy gemma.bin), az eredeti név a beállításokba kerül.
+ *  - Gemma:   a kiválasztott .litertlm bemásolása RÖGZÍTETT néven
+ *             (files/models/gemma.litertlm), az eredeti név a beállításokba kerül.
  */
 object ModelImporter {
 
@@ -25,13 +25,13 @@ object ModelImporter {
         val whisperInstalled: Boolean,
         val gemmaFileName: String? = null,
         val gemmaSizeBytes: Long = 0,
-        /** Van modellfájl, de a MediaPipe nem tudja futtatni (pl. régi verzióval importált Gemma 4). */
+        /** Van modellfájl, de a LiteRT-LM nem tudja futtatni (pl. régi MediaPipe .task vagy sérült fájl). */
         val gemmaInvalidSizeBytes: Long = 0
     )
 
-    data class GemmaTestResult(val answer: String, val loadSeconds: Double, val answerSeconds: Double)
+    data class GemmaTestResult(val answer: String, val loadSeconds: Double, val answerSeconds: Double, val backend: String)
 
-    data class GemmaImportResult(val originalName: String, val sizeBytes: Long, val loadSeconds: Double)
+    data class GemmaImportResult(val originalName: String, val sizeBytes: Long, val loadSeconds: Double, val backend: String)
 
     private fun modelsDir(ctx: Context) = GemmaModel.modelsDir(ctx)
 
@@ -47,7 +47,15 @@ object ModelImporter {
     }
 
     /** A nem futtatható (érvénytelen) Gemma-fájl törlése. */
-    fun deleteInvalidGemma(ctx: Context): Boolean = GemmaModel.invalidFile(ctx)?.delete() == true
+    fun deleteInvalidGemma(ctx: Context): Boolean {
+        var deleted = false
+        while (true) {
+            val f = GemmaModel.invalidFile(ctx) ?: break
+            if (!f.delete()) break
+            deleted = true
+        }
+        return deleted
+    }
 
     /** Modell teszt: betöltés + egy rövid magyar kérdés, időmérással. Hibánál érthető kivételt dob. */
     fun testGemma(ctx: Context): GemmaTestResult {
@@ -56,7 +64,7 @@ object ModelImporter {
             return GemmaSession.open(ctx, f).use { s ->
                 val t0 = System.currentTimeMillis()
                 val a = s.generate("Foglald össze egy mondatban: A projekt határideje péntek, a felelős Kovács Anna.", 120_000L)
-                GemmaTestResult(a, s.loadMillis / 1000.0, (System.currentTimeMillis() - t0) / 1000.0)
+                GemmaTestResult(a, s.loadMillis / 1000.0, (System.currentTimeMillis() - t0) / 1000.0, s.backendName)
             }
         } catch (t: Throwable) {
             throw IllegalStateException("A Gemma nem futott: ${t.message ?: t.javaClass.simpleName}", t)
@@ -76,14 +84,17 @@ object ModelImporter {
 
     /**
      * Gemma importálása. Hibánál kivételt dob, magyar, felhasználónak szóló üzenettel.
-     * Siker esetén próbabetöltést is végez (rövid prompt, 120 mp időkorláttal).
+     * Siker esetén próbabetöltést is végez (GPU, hiba esetén CPU; rövid prompt).
      */
     fun importGemma(ctx: Context, uri: Uri): GemmaImportResult {
         var originalName = "gemma"
+        var declaredSize = -1L
         ctx.contentResolver.query(uri, null, null, null, null)?.use {
             if (it.moveToFirst()) {
                 val idx = it.getColumnIndex(OpenableColumns.DISPLAY_NAME)
                 if (idx >= 0) it.getString(idx)?.let { n -> originalName = n }
+                val sIdx = it.getColumnIndex(OpenableColumns.SIZE)
+                if (sIdx >= 0 && !it.isNull(sIdx)) declaredSize = it.getLong(sIdx)
             }
         }
 
@@ -91,11 +102,19 @@ object ModelImporter {
         val read = ctx.contentResolver.openInputStream(uri)?.use { it.read(header) } ?: -1
         check(read > 0) { "Nem olvasható a kiválasztott fájl." }
         val format = GemmaModel.detectFormat(header, originalName)
-        GemmaModel.rejectionMessage(format)?.let { error(it) }
+        GemmaModel.rejectionMessage(format, originalName)?.let { error(it) }
 
-        val fixedName = if (format == GemmaModel.Format.TASK) GemmaModel.TASK_NAME else GemmaModel.BIN_NAME
-        val target = File(modelsDir(ctx), fixedName)
-        val tmp = File(modelsDir(ctx), "$fixedName.part")
+        // Szabad hely ellenőrzése (a modell + 200 MB tartalék)
+        if (declaredSize > 0) {
+            val free = modelsDir(ctx).usableSpace
+            check(free > declaredSize + 200_000_000L) {
+                "Nincs elég szabad hely: kell kb. %.1f GB, szabad %.1f GB.".format(
+                    (declaredSize + 200_000_000L) / 1e9, free / 1e9)
+            }
+        }
+
+        val target = File(modelsDir(ctx), GemmaModel.MODEL_NAME)
+        val tmp = File(modelsDir(ctx), "${GemmaModel.MODEL_NAME}.part")
         tmp.delete()
 
         try {
@@ -111,31 +130,35 @@ object ModelImporter {
         }
         if (tmp.length() <= GemmaModel.MIN_SIZE_BYTES) {
             tmp.delete()
-            error("A fájl gyanúsan kicsi — biztosan MediaPipe Gemma-modell?")
+            error("A fájl gyanúsan kicsi — biztosan Gemma .litertlm modell?")
+        }
+        if (declaredSize > 0 && tmp.length() != declaredSize) {
+            tmp.delete()
+            error("A fájl csak részben másolódott át (${tmp.length()} / $declaredSize bájt). Próbáld újra.")
         }
 
-        // A korábbi Gemma-modellek (rögzített és régi, eredeti nevű) eltávolítása
+        // A korábbi Gemma-modellek (rögzített, régi MediaPipe és eredeti nevű) eltávolítása
         modelsDir(ctx).listFiles()?.filter {
-            it.isFile && it != tmp && (it.name == GemmaModel.TASK_NAME || it.name == GemmaModel.BIN_NAME ||
+            it.isFile && it != tmp && (it.name == GemmaModel.MODEL_NAME || it.name in GemmaModel.LEGACY_NAMES ||
                 it.name.lowercase().startsWith("gemma"))
         }?.forEach { it.delete() }
 
         check(tmp.renameTo(target)) { tmp.delete(); "Nem sikerült véglegesíteni a modellfájlt." }
 
         // Próbabetöltés: ha nem sikerül, a fájl törlődik, és a hiba megjelenik.
-        val loadSeconds = try {
+        val probe = try {
             GemmaSession.open(ctx, target).use { s ->
                 s.generate("Válaszolj egy szóval: OK", timeoutMs = 120_000L)
-                s.loadMillis / 1000.0
+                Pair(s.loadMillis / 1000.0, s.backendName)
             }
         } catch (t: Throwable) {
             target.delete()
-            throw IllegalStateException("A modell bemásolódott, de a MediaPipe nem tudja betölteni, ezért töröltem. " +
+            throw IllegalStateException("A modell bemásolódott, de a LiteRT-LM motor nem tudja betölteni, ezért töröltem. " +
                 "Ok: ${t.message ?: t.javaClass.simpleName}", t)
         }
 
         runBlocking { Settings.setGemmaModelName(ctx, originalName) }
-        return GemmaImportResult(originalName, target.length(), loadSeconds)
+        return GemmaImportResult(originalName, target.length(), probe.first, probe.second)
     }
 
     /** Régi (1.0.3 előtti) Vosk-modell törlése: a Vosk 1.0.4-től nincs az appban. */

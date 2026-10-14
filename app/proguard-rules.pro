@@ -3,10 +3,12 @@
 -keep class com.redravencomputing.whispercore.** { *; }
 -keepclasseswithmembernames class * { native <methods>; }
 
-# --- MediaPipe LLM (Gemma) ---
--keep class com.google.mediapipe.** { *; }
+# --- LiteRT-LM (Gemma 4) – JNI-n keresztül név szerint hívott osztályok ---
+-keep class com.google.ai.edge.litertlm.** { *; }
+-dontwarn com.google.ai.edge.litertlm.**
+-keep class com.google.gson.** { *; }
+-dontwarn com.google.gson.**
 -keep class com.google.protobuf.** { *; }
--dontwarn com.google.mediapipe.**
 -dontwarn com.google.protobuf.**
 
 # --- JavaMail (napi összefoglaló e-mail) ---

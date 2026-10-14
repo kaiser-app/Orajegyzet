@@ -92,7 +92,8 @@ data class AppSettings(
     val digestHour: Int = 18,
     val secretsLost: Boolean = false,
     val gemmaModelName: String = "",
-    val schoolMode: Boolean = false         // iskolai mód: órarend, csengetés, widget (1.0.4)
+    val schoolMode: Boolean = false,        // iskolai mód: órarend, csengetés, widget (1.0.4)
+    val preferGemini: Boolean = false       // alap elemző: false = Gemma 4 helyben, true = Gemini (1.1)
 )
 
 private val Context.ds by preferencesDataStore("settings")
@@ -120,6 +121,7 @@ object Settings {
     private val DHOUR = intPreferencesKey("dhour")
     private val GEMMA_MODEL_NAME = stringPreferencesKey("gemma_model_name")
     private val SCHOOL_MODE = booleanPreferencesKey("school_mode")
+    private val PREFER_GEMINI = booleanPreferencesKey("prefer_gemini")
 
     suspend fun migrateSecretsIfNeeded(ctx: Context) {
         try {
@@ -170,7 +172,8 @@ object Settings {
             digestHour = p[DHOUR] ?: 18,
             secretsLost = SecretCipher.secretsLost,
             gemmaModelName = p[GEMMA_MODEL_NAME] ?: "",
-            schoolMode = p[SCHOOL_MODE] ?: false
+            schoolMode = p[SCHOOL_MODE] ?: false,
+            preferGemini = p[PREFER_GEMINI] ?: false
         )
     }
 
@@ -213,6 +216,7 @@ object Settings {
             p[DHOUR] = s.digestHour
             p[GEMMA_MODEL_NAME] = s.gemmaModelName
             p[SCHOOL_MODE] = s.schoolMode
+            p[PREFER_GEMINI] = s.preferGemini
         }
         if (secretError == null) SecretCipher.secretsLost = false
         secretError?.let { throw it }

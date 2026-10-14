@@ -1,5 +1,15 @@
 # Változási Napló (Changelog) – AssiSten-s (korábban Fülelő Hangjegyzet)
 
+## 1.1.0 (versionCode 7) – Gemma 4 a LiteRT-LM motoron
+
+- **Motorcsere:** a MediaPipe (`tasks-genai`) helyett a LiteRT-LM (`litertlm-android:0.11.0`, ugyanaz, mint a Google AI Edge Gallery 1.0.20-ban). Így fut a **Gemma 4 E2B** (`gemma-4-E2B-it.litertlm`, 2,59 GB).
+- Gyorsító: először GPU, hiba esetén automatikusan CPU; a ténylegesen használt gyorsító látszik az import és a modellteszt eredményében.
+- Tokenkeret 2048 → 4000 (a Gallery Gemma 4-beállítása), így ritkábban kell blokkosítani.
+- A modell rögzített neve: `files/models/gemma.litertlm`. Indításkor a régi néven (pl. `gemma.task`) mentett, de valójában `.litertlm` tartalmú fájl **automatikusan átneveződik** – a korábban betöltött Gemma 4 újraimportálás nélkül működik.
+- Az import csak `.litertlm` fájlt fogad (fejléc: `LITERTLM`), ellenőrzi a szabad helyet és a teljes átmásolást; a régi `.task` fájlra érthető üzenetet ad.
+- **Alap elemző választó** (Beállítások → Feldolgozás): Gemma 4 (helyben, alapértelmezett) / Gemini (felhő). Gemma-alapnál a Gemini csak akkor fut, ha nincs telepített Gemma-modell, vagy kérésre („Újrafogalmazás Geminivel”).
+- `minSdk` 26 → 31 (Android 12+), a LiteRT-LM igénye.
+
 ## 1.0.4 (versionCode 6) – AssiSten-s
 
 **Átnevezés**
