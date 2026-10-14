@@ -177,4 +177,19 @@ class SummaryStylesTest {
         assertFalse(OfflinePipeline.verifySourceCoherence(minutes, source))
         assertTrue(OfflinePipeline.verifySourceCoherence(minutes, source, allowedText = instr))
     }
+
+    @Test fun cleanLoopsKeepsMarkdownStructure() {
+        val table = "| # | Feladat | Felelős | Határidő |\n|---|---|---|---|\n" +
+            "| 1 | Költségvetés elkészítése | Kovács Anna | péntek |\n| 2 | Tesztelés | Péter | jövő hét |"
+        assertEquals(table, OfflinePipeline.cleanLoops(table))
+    }
+
+    @Test fun cleanLoopsCutsRealLoop() {
+        val looped = "**Lényeg:** a költségvetés elkészül.\n" +
+            List(5) { "A költségvetést Kovács Anna készíti el péntekig." }.joinToString("\n")
+        val out = OfflinePipeline.cleanLoops(looped)
+        assertTrue(out.startsWith("**Lényeg:**"))
+        assertEquals(1, Regex("Kovács Anna").findAll(out).count())
+        assertTrue(out.contains("\n"))
+    }
 }

@@ -221,7 +221,7 @@ object ReportBuilder {
             try {
                 OfflinePipeline.releaseWarmWhisper()
                 val raw = GemmaSession.open(ctx, gemmaFile).use { it.generate(prompt(type, facts), 180_000L) }
-                val text = if (OfflinePipeline.hasLoop(raw)) OfflinePipeline.removeLoopSentences(raw) else raw
+                val text = OfflinePipeline.cleanLoops(raw)
                 when {
                     text.length < 40 -> warning = listOfNotNull(warning, "A Gemma válasza üres vagy túl rövid volt.").joinToString(" ")
                     OfflinePipeline.echoesPrompt(text, instruction(type)) ->

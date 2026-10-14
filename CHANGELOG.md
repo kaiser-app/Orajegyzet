@@ -10,6 +10,9 @@
 - Gemini: új `generateFreeText` hívás kötött JSON-séma nélkül, így a kért szerkezet megmarad (a projektjelentések is ezt használják).
 - Gemma: hosszú leiratnál a blokkokból előbb tények gyűjtése, majd a kért stílusban egyetlen végső összefoglaló; a szerkezet szavai (pl. „Határozatok”) nem számítanak hallucinációnak.
 - **Beállítások → Feldolgozás:** új „Jelenleg: …” sor mutatja, ténylegesen melyik motor készíti az összefoglalót (és miért). A Gemma-kapcsoló felirata egyértelműbb.
+- A Gemma ismétlés-szűrője megőrzi a sortöréseket, így a címsoros, felsorolásos és táblázatos válasz nem esik szét egyetlen bekezdéssé (projektjelentéseknél is).
+- Stílusos Gemma-összefoglalónál nagyobb hely marad a válasznak (500 helyett 1200 token), hogy a jegyzőkönyv és a részletes jegyzet ne szakadjon el.
+- A jegyzetmegjelenítő táblázatot is rajzol (a „Teendők” típus táblázata nem nyers `|` jelekkel látszik).
 - Ha a „Gemma 4 használata” ki van kapcsolva, a telepített modell már nem kényszeríti offline kivonatra a feldolgozást – a Gemini fut.
 
 ## 1.1.0 (versionCode 7) – Gemma 4 a LiteRT-LM motoron

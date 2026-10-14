@@ -141,7 +141,7 @@ class OfflinePipeline(
         try {
             val single = finalPrompt(instruction, clean, styled)
             var text: String? = null
-            if (fitsInOneCall(single)) {
+            if (fitsInOneCall(single, styled)) {
                 onProgress?.invoke("Összefoglaló: Gemma")
                 text = session.generate(single, BLOCK_TIMEOUT_MS)
             } else {
@@ -156,13 +156,13 @@ class OfflinePipeline(
                         onProgress?.invoke("Összefoglaló: Gemma (${i + 1}/${parts.size} blokk" +
                             (if (round > 1) ", $round. kör" else "") + ")")
                         val raw = session.generate(blockPrompt(block, styled), BLOCK_TIMEOUT_MS)
-                        val cleaned = if (hasLoop(raw)) removeLoopSentences(raw) else raw
+                        val cleaned = cleanLoops(raw)
                         if (cleaned.isNotBlank()) partials += cleaned
                     }
                     if (partials.isEmpty()) throw IllegalStateException("a Gemma üres választ adott")
                     val joined = partials.joinToString("\n")
                     val prompt = finalPrompt(instruction, joined, styled)
-                    if (fitsInOneCall(prompt) || round >= 3) {
+                    if (fitsInOneCall(prompt, styled) || round >= 3) {
                         onProgress?.invoke("Összefoglaló: Gemma (végső összegzés)")
                         text = session.generate(prompt, BLOCK_TIMEOUT_MS)
                     } else {
@@ -172,7 +172,7 @@ class OfflinePipeline(
                 }
             }
             val finalText = text ?: ""
-            val processed = if (hasLoop(finalText)) removeLoopSentences(finalText) else finalText
+            val processed = cleanLoops(finalText)
             if (processed.length < (if (styled) 20 else 40))
                 return fallback("A Gemma válasza üres vagy túl rövid volt. Kivonat látható.")
             // A kért szerkezet szavai (pl. „Határozatok", „Felelős") nem számítanak kitaláltnak.
@@ -189,8 +189,10 @@ class OfflinePipeline(
         }
     }
 
-    private fun fitsInOneCall(prompt: String): Boolean =
-        GemmaSession.estimateTokens(prompt) + RESPONSE_TOKENS <= GemmaSession.MAX_TOKENS
+    /** A stílusos (jegyzőkönyv, részletes) válasz hosszabb, ezért ott nagyobb helyet hagyunk a kimenetnek. */
+    private fun fitsInOneCall(prompt: String, styled: Boolean = false): Boolean =
+        GemmaSession.estimateTokens(prompt) + (if (styled) STYLED_RESPONSE_TOKENS else RESPONSE_TOKENS) <=
+            GemmaSession.MAX_TOKENS
 
     private fun finalPrompt(instruction: String, text: String, styled: Boolean = false): String {
         // Stílusos kérésnél a stílus saját szerkezete és szabályai érvényesek (SummaryStyles).
@@ -465,6 +467,7 @@ class OfflinePipeline(
     companion object {
         private const val MAX_TRANSCRIPT_CHARS = 24_000
         private const val RESPONSE_TOKENS = 500
+        private const val STYLED_RESPONSE_TOKENS = 1200
         private const val BLOCK_TIMEOUT_MS = 120_000L
         private const val TOTAL_SUMMARY_MS = 10 * 60_000L
 
@@ -529,6 +532,27 @@ class OfflinePipeline(
                 result.add(s)
             }
             return result.joinToString(" ")
+        }
+
+        /**
+         * Ismétlés-szűrő, amely MEGŐRZI a sortöréseket (markdown: címsorok, felsorolás, táblázat).
+         * Egysoros szövegnél a régi mondatalapú szűrő fut. Többsorosnál az ismétlődő sor kimarad,
+         * a 3. ismétlés után pedig (valódi hurok) a szöveg ott lezárul.
+         */
+        fun cleanLoops(text: String): String {
+            if (!text.contains('\n')) return if (hasLoop(text)) removeLoopSentences(text) else text
+            val seen = mutableSetOf<String>()
+            val out = mutableListOf<String>()
+            var repeats = 0
+            for (line in text.lines()) {
+                val norm = line.lowercase().replace(Regex("[^\\p{L}\\p{Nd} ]"), "").trim()
+                if (norm.length > 15 && !seen.add(norm)) {
+                    if (++repeats >= 3) break
+                    continue
+                }
+                out += line
+            }
+            return out.joinToString("\n").trimEnd()
         }
 
         fun verifySourceCoherence(summaryText: String, sourceText: String, allowedText: String = ""): Boolean {

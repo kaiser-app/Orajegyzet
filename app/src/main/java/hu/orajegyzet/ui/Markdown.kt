@@ -28,7 +28,8 @@ fun BackButton(onBack: () -> Unit) {
 
 /**
  * Könnyű markdown-megjelenítő: címsorok (#, ##, ###), félkövér (**szöveg**),
- * felsorolás (* vagy -). Nem teljes markdown, de a jegyzetekhez bőven elég.
+ * felsorolás (* vagy -), egyszerű táblázat (| a | b |). Nem teljes markdown,
+ * de a jegyzetekhez bőven elég.
  */
 @Composable
 fun MarkdownText(md: String, modifier: Modifier = Modifier) {
@@ -38,6 +39,24 @@ fun MarkdownText(md: String, modifier: Modifier = Modifier) {
             val trimmed = line.trimStart()
             when {
                 line.isBlank() -> Spacer(Modifier.height(6.dp))
+                isTableSeparator(trimmed) -> Unit
+                trimmed.startsWith("|") -> {
+                    val cells = tableCells(trimmed)
+                    val header = md.lines().map { it.trim() }.let { all ->
+                        val i = all.indexOf(trimmed)
+                        i >= 0 && i + 1 < all.size && isTableSeparator(all[i + 1])
+                    }
+                    Row(Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
+                        cells.forEachIndexed { idx, c ->
+                            Text(
+                                parseInline(c),
+                                fontSize = 13.sp,
+                                fontWeight = if (header) FontWeight.Bold else FontWeight.Normal,
+                                modifier = Modifier.weight(if (idx == 0 && c.length <= 3) 0.4f else 1f).padding(end = 6.dp)
+                            )
+                        }
+                    }
+                }
                 trimmed.startsWith("### ") -> Text(
                     parseInline(trimmed.removePrefix("### ")),
                     fontWeight = FontWeight.SemiBold, fontSize = 15.sp,
@@ -66,6 +85,14 @@ fun MarkdownText(md: String, modifier: Modifier = Modifier) {
         }
     }
 }
+
+/** Markdown-táblázat elválasztósora, pl. |---|:---:|. */
+internal fun isTableSeparator(line: String): Boolean =
+    line.startsWith("|") && line.contains("-") && line.all { it == '|' || it == '-' || it == ':' || it == ' ' }
+
+/** Egy táblázatsor cellái (a szélső | jelek nélkül). */
+internal fun tableCells(line: String): List<String> =
+    line.trim().removePrefix("|").removeSuffix("|").split("|").map { it.trim() }
 
 private fun parseInline(s: String): AnnotatedString = buildAnnotatedString {
     var i = 0
