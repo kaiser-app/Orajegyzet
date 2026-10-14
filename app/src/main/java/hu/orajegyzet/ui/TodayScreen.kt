@@ -532,12 +532,10 @@ fun NoteDetailScreen(noteId: Long, onBack: () -> Unit) {
             try {
                 val s = Settings.get(ctx)
                 val sourceText = n.transcript.ifBlank { n.summary }
-                val promptInstruction = when (type) {
-                    "Vezetői" -> "Készíts asszertív hivatali és vezetői stílusú, határozott összefoglalót (fő döntések, stratégia, kötelezettségek)."
-                    "Jegyzőkönyv" -> "Készíts szigorúan asszertív hivatali jegyzőkönyvet (napirend, elhangzottak, hivatalos határozatok és felelősök)."
-                    "Teendők" -> "Gyűjtsd össze az összes elhangzott teendőt, akciótervet és felelőst határozott hivatali formátumban."
-                    else -> "Készíts strukturált, asszertív hivatali hangvételű jegyzetet és összefoglalót."
-                }
+                // 1.1.1: minden típus saját, határozott szerkezetet kap (SummaryStyles),
+                // és ugyanezt kapja a Gemini és a Gemma is.
+                val promptInstruction = hu.orajegyzet.ai.SummaryStyles.instruction(
+                    hu.orajegyzet.ai.SummaryStyles.fromLabel(type))
 
                 val offline = OfflinePipeline(
                     ctx,
@@ -556,9 +554,8 @@ fun NoteDetailScreen(noteId: Long, onBack: () -> Unit) {
                 var warning: String? = null
                 val resultText: String = if (hu.orajegyzet.ai.ModeSelector.canUseGeminiNow(ctx, s)) {
                     try {
-                        val fullPrompt = "$promptInstruction\n\nSzöveg:\n$sourceText"
                         val r = GeminiPipeline(s.geminiApiKey, s.geminiModel)
-                            .resummarize(fullPrompt, n.subject, n.dateIso, false).summary
+                            .generateFreeText(promptInstruction, sourceText)
                         label = "$type · ☁ Gemini"
                         r
                     } catch (e: Exception) {
@@ -696,7 +693,7 @@ fun NoteDetailScreen(noteId: Long, onBack: () -> Unit) {
                             item {
                                 FilterChip(
                                     selected = false,
-                                    onClick = { requestCustomSummary("Tanulmányi") },
+                                    onClick = { requestCustomSummary("Részletes jegyzet") },
                                     label = { Text("📝 Részletes Jegyzet", maxLines = 1) }
                                 )
                             }

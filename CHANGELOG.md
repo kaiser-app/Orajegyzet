@@ -1,5 +1,17 @@
 # Változási Napló (Changelog) – AssiSten-s (korábban Fülelő Hangjegyzet)
 
+## 1.1.1 (versionCode 8) – Valóban eltérő összefoglaló-típusok, átlátható Gemma-beállítás
+
+- **Hibajavítás – egyforma összefoglalók:** a „Vezetői / Jegyzőkönyv / Teendők / Részletes jegyzet” gombok eddig ugyanazt a JSON-alapú, 8–12 mondatos jegyzetet kérték (Geminin), illetve ugyanazt a „foglald össze N mondatban” utasítást (Gemmán). Mostantól minden típus saját szerkezetet ír elő (`SummaryStyles`):
+  - Vezetői: ≤150 szó, Lényeg / Döntések / Kockázatok / Következő lépés;
+  - Jegyzőkönyv: Tárgy, Résztvevők, Napirendi pontok, Elhangzottak, Határozatok, Felelősök és határidők;
+  - Teendők: táblázat (Feladat | Felelős | Határidő);
+  - Részletes jegyzet: témakörönkénti alcímek + Kulcsfogalmak.
+- Gemini: új `generateFreeText` hívás kötött JSON-séma nélkül, így a kért szerkezet megmarad (a projektjelentések is ezt használják).
+- Gemma: hosszú leiratnál a blokkokból előbb tények gyűjtése, majd a kért stílusban egyetlen végső összefoglaló; a szerkezet szavai (pl. „Határozatok”) nem számítanak hallucinációnak.
+- **Beállítások → Feldolgozás:** új „Jelenleg: …” sor mutatja, ténylegesen melyik motor készíti az összefoglalót (és miért). A Gemma-kapcsoló felirata egyértelműbb.
+- Ha a „Gemma 4 használata” ki van kapcsolva, a telepített modell már nem kényszeríti offline kivonatra a feldolgozást – a Gemini fut.
+
 ## 1.1.0 (versionCode 7) – Gemma 4 a LiteRT-LM motoron
 
 - **Motorcsere:** a MediaPipe (`tasks-genai`) helyett a LiteRT-LM (`litertlm-android:0.11.0`, ugyanaz, mint a Google AI Edge Gallery 1.0.20-ban). Így fut a **Gemma 4 E2B** (`gemma-4-E2B-it.litertlm`, 2,59 GB).

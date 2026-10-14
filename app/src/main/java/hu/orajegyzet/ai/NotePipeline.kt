@@ -63,7 +63,7 @@ object ModeSelector {
     fun choose(ctx: Context, s: AppSettings): Boolean /* true = online */ {
         if (s.privacyLock) return false
         if (s.geminiApiKey.isBlank()) return false
-        if (!s.preferGemini && GemmaModel.file(ctx) != null) return false
+        if (!s.preferGemini && s.useGemma && GemmaModel.file(ctx) != null) return false
         return when (s.mode) {
             Mode.OFFLINE -> false
             Mode.ONLINE -> true
@@ -77,7 +77,7 @@ object ModeSelector {
      */
     fun canUseGeminiNow(ctx: Context, s: AppSettings): Boolean {
         if (s.privacyLock || s.geminiApiKey.isBlank() || s.mode == Mode.OFFLINE) return false
-        if (!s.preferGemini && GemmaModel.file(ctx) != null) return false
+        if (!s.preferGemini && s.useGemma && GemmaModel.file(ctx) != null) return false
         return hasNetwork(ctx, s.wifiOnly)
     }
 

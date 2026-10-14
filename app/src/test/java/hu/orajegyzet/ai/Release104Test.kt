@@ -149,3 +149,32 @@ class Release104Test {
         assertTrue(p.contains("PRJ-01"))
     }
 }
+
+/** 1.1.1: a stílusos összefoglalók ténylegesen különböznek, és a szerkezet szavai nem „hallucinációk”. */
+class SummaryStylesTest {
+
+    @Test fun everyStyleHasItsOwnStructure() {
+        val all = SummaryStyles.Style.values().map { SummaryStyles.instruction(it) }
+        assertEquals(all.size, all.toSet().size)
+        assertTrue(SummaryStyles.instruction(SummaryStyles.Style.EXECUTIVE).contains("**Lényeg:**"))
+        assertTrue(SummaryStyles.instruction(SummaryStyles.Style.MINUTES).contains("**Határozatok:**"))
+        assertTrue(SummaryStyles.instruction(SummaryStyles.Style.ACTIONS).contains("| Feladat | Felelős | Határidő |"))
+        assertTrue(SummaryStyles.instruction(SummaryStyles.Style.DETAILED).contains("**Kulcsfogalmak:**"))
+    }
+
+    @Test fun labelsMapToStyles() {
+        assertEquals(SummaryStyles.Style.EXECUTIVE, SummaryStyles.fromLabel("Vezetői"))
+        assertEquals(SummaryStyles.Style.MINUTES, SummaryStyles.fromLabel("Jegyzőkönyv"))
+        assertEquals(SummaryStyles.Style.ACTIONS, SummaryStyles.fromLabel("Teendők"))
+        assertEquals(SummaryStyles.Style.DETAILED, SummaryStyles.fromLabel("Részletes jegyzet"))
+    }
+
+    @Test fun templateWordsDoNotTriggerHallucinationFilter() {
+        val source = "Kovács Anna vállalta a költségvetés elkészítését péntekig. A tesztelést Péter végzi a jövő héten."
+        val minutes = "**Tárgy:** költségvetés\n**Résztvevők:** nem rögzített\n**Napirendi pontok:** 1. költségvetés\n" +
+            "**Határozatok:** nem született határozat\n**Felelősök és határidők:** költségvetés – Kovács Anna – péntek"
+        val instr = SummaryStyles.instruction(SummaryStyles.Style.MINUTES)
+        assertFalse(OfflinePipeline.verifySourceCoherence(minutes, source))
+        assertTrue(OfflinePipeline.verifySourceCoherence(minutes, source, allowedText = instr))
+    }
+}

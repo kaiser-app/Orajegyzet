@@ -108,7 +108,7 @@ class OfflinePipeline(
         val gemmaFile = GemmaModel.file(ctx)
             ?: return StyleResult(Extractive.summarize(clean, 6), SummaryEngine.EXTRACTIVE,
                 "Nincs telepítve Gemma-modell (Beállítások → Modellek), kivonat készült.")
-        val result = gemmaSummarize(instruction, clean, gemmaFile)
+        val result = gemmaSummarize(instruction, clean, gemmaFile, styled = true)
         if (result.engine == SummaryEngine.GEMMA && echoesPrompt(result.text, instruction)) {
             return StyleResult(Extractive.summarize(clean, 6), SummaryEngine.EXTRACTIVE,
                 "A Gemma a kérést ismételte vissza, kivonat készült. Próbáld újra.")
@@ -122,7 +122,9 @@ class OfflinePipeline(
      *  - különben blokkonként részösszefoglaló, majd ezekből a végső (map-reduce).
      * A modell a teljes folyamat alatt EGYSZER töltődik be.
      */
-    private suspend fun gemmaSummarize(instruction: String, clean: String, gemmaFile: File): StyleResult {
+    private suspend fun gemmaSummarize(
+        instruction: String, clean: String, gemmaFile: File, styled: Boolean = false
+    ): StyleResult {
         val fallback = { why: String ->
             Log.w("FuleloAI", "summary engine=EXTRACTIVE reason=$why")
             StyleResult(Extractive.summarize(clean, 8), SummaryEngine.EXTRACTIVE, why)
@@ -137,7 +139,7 @@ class OfflinePipeline(
             return fallback("A Gemma nem futott: ${e.message}. Kivonat látható.")
         }
         try {
-            val single = finalPrompt(instruction, clean)
+            val single = finalPrompt(instruction, clean, styled)
             var text: String? = null
             if (fitsInOneCall(single)) {
                 onProgress?.invoke("Összefoglaló: Gemma")
@@ -153,13 +155,13 @@ class OfflinePipeline(
                             throw GemmaTimeoutException("Az összefoglaló 10 perc alatt nem készült el.")
                         onProgress?.invoke("Összefoglaló: Gemma (${i + 1}/${parts.size} blokk" +
                             (if (round > 1) ", $round. kör" else "") + ")")
-                        val raw = session.generate(blockPrompt(block), BLOCK_TIMEOUT_MS)
+                        val raw = session.generate(blockPrompt(block, styled), BLOCK_TIMEOUT_MS)
                         val cleaned = if (hasLoop(raw)) removeLoopSentences(raw) else raw
                         if (cleaned.isNotBlank()) partials += cleaned
                     }
                     if (partials.isEmpty()) throw IllegalStateException("a Gemma üres választ adott")
                     val joined = partials.joinToString("\n")
-                    val prompt = finalPrompt(instruction, joined)
+                    val prompt = finalPrompt(instruction, joined, styled)
                     if (fitsInOneCall(prompt) || round >= 3) {
                         onProgress?.invoke("Összefoglaló: Gemma (végső összegzés)")
                         text = session.generate(prompt, BLOCK_TIMEOUT_MS)
@@ -171,8 +173,10 @@ class OfflinePipeline(
             }
             val finalText = text ?: ""
             val processed = if (hasLoop(finalText)) removeLoopSentences(finalText) else finalText
-            if (processed.length < 40) return fallback("A Gemma válasza üres vagy túl rövid volt. Kivonat látható.")
-            if (!verifySourceCoherence(processed, clean)) {
+            if (processed.length < (if (styled) 20 else 40))
+                return fallback("A Gemma válasza üres vagy túl rövid volt. Kivonat látható.")
+            // A kért szerkezet szavai (pl. „Határozatok", „Felelős") nem számítanak kitaláltnak.
+            if (!verifySourceCoherence(processed, clean, allowedText = instruction)) {
                 return fallback("A Gemma válasza nem egyezett a leirattal (hallucináció-szűrő), ezért elvetettem. Kivonat látható.")
             }
             Log.i("FuleloAI", "summary engine=GEMMA load=${session.loadMillis}ms")
@@ -188,7 +192,9 @@ class OfflinePipeline(
     private fun fitsInOneCall(prompt: String): Boolean =
         GemmaSession.estimateTokens(prompt) + RESPONSE_TOKENS <= GemmaSession.MAX_TOKENS
 
-    private fun finalPrompt(instruction: String, text: String): String {
+    private fun finalPrompt(instruction: String, text: String, styled: Boolean = false): String {
+        // Stílusos kérésnél a stílus saját szerkezete és szabályai érvényesek (SummaryStyles).
+        if (styled) return "$instruction\n\nSzöveg:\n$text"
         val n = countSentences(text).coerceIn(2, 8)
         return """
             $instruction
@@ -201,7 +207,8 @@ class OfflinePipeline(
         """.trimIndent()
     }
 
-    private fun blockPrompt(block: String): String = """
+    private fun blockPrompt(block: String, styled: Boolean = false): String =
+        if (styled) "${SummaryStyles.BLOCK_FACTS_PROMPT}\n\nRészlet:\n$block" else """
         Foglald össze magyarul legfeljebb 4 mondatban az alábbi leirat-részlet tényeit
         (témák, döntések, felelősök, határidők). Csak a szövegben szereplő tényeket használd.
 
@@ -524,9 +531,9 @@ class OfflinePipeline(
             return result.joinToString(" ")
         }
 
-        fun verifySourceCoherence(summaryText: String, sourceText: String): Boolean {
+        fun verifySourceCoherence(summaryText: String, sourceText: String, allowedText: String = ""): Boolean {
             val wordRegex = Regex("[\\p{L}\\p{Nd}]+")
-            val sourceStems = wordRegex.findAll(sourceText)
+            val sourceStems = wordRegex.findAll("$sourceText $allowedText")
                 .map { it.value.lowercase() }
                 .filter { it.length >= 4 && it !in Extractive.STOP }
                 .map { it.take(5) }

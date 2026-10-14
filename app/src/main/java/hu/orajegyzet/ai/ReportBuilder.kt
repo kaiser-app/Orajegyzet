@@ -199,8 +199,7 @@ object ReportBuilder {
         else ModeSelector.canUseGeminiNow(ctx, s)
         if (geminiAllowed) {
             try {
-                val text = GeminiPipeline(s.geminiApiKey, s.geminiModel)
-                    .resummarize(prompt(type, facts), p.name, today.toString(), false).summary
+                val text = GeminiPipeline(s.geminiApiKey, s.geminiModel).generateFreeText(prompt(type, facts))
                 if (text.isNotBlank()) {
                     Log.i("FuleloAI", "report=$type engine=GEMINI")
                     return Report(text, SummaryEngine.GEMINI)

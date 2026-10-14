@@ -319,7 +319,23 @@ fun SettingsScreen(onBack: () -> Unit) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Switch(checked = s.useGemma, onCheckedChange = { s = s.copy(useGemma = it) })
                         Spacer(Modifier.width(8.dp))
-                        Text("Gemma összefoglaló offline módban (ki: csak kivonat)")
+                        Text("Gemma 4 használata (helyi összefoglaló; ki: csak kivonat)")
+                    }
+                    // 1.1.1: egyértelmű kijelzés, mi fog ténylegesen futni a mostani beállításokkal
+                    val geminiPossible = !s.privacyLock && s.geminiApiKey.isNotBlank() && s.mode != Mode.OFFLINE
+                    val gemmaReady = s.useGemma && modelStatus.gemmaInstalled
+                    val effective = when {
+                        !geminiPossible && gemmaReady -> "Leirat: Whisper (helyben) · Elemzés: Gemma 4 (helyben)"
+                        !geminiPossible -> "Leirat: Whisper (helyben) · Elemzés: kivonat (nem AI) – " +
+                            (if (!s.useGemma) "a Gemma ki van kapcsolva" else "nincs telepített Gemma-modell")
+                        !s.preferGemini && gemmaReady -> "Leirat: Whisper (helyben) · Elemzés: Gemma 4 (helyben); a Gemini csak kérésre"
+                        s.mode == Mode.AUTO -> "Leirat és elemzés: Gemini (hálózat nélkül: Whisper + " +
+                            (if (gemmaReady) "Gemma 4)" else "kivonat)")
+                        else -> "Leirat és elemzés: Gemini (felhő)"
+                    }
+                    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) {
+                        Text("Jelenleg: $effective", modifier = Modifier.padding(10.dp), fontSize = 13.sp,
+                            fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onSecondaryContainer)
                     }
                 }
             }

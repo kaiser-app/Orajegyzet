@@ -146,6 +146,42 @@ class GeminiPipeline(
         return parseModelJson(raw, fallbackTranscript = transcript).copy(transcript = transcript)
     }
 
+    /**
+     * Szabad formátumú szöveggenerálás (1.1.1): a megadott utasítást és szöveget KÖZVETLENÜL küldi,
+     * a jegyzet-JSON séma nélkül. Ezt használják a stílusos összefoglalók és a projektjelentések,
+     * hogy a kért szerkezet (vezetői, jegyzőkönyv, teendők, részletes) ténylegesen érvényesüljön.
+     */
+    fun generateFreeText(instruction: String, text: String = "", system: String = SummaryStyles.SYSTEM): String {
+        validateApiKey()
+        val userText = if (text.isBlank()) instruction else "$instruction\n\nSzöveg:\n$text"
+        var lastError: Exception? = null
+        for (m in modelsToTry()) {
+            try {
+                val body = JSONObject()
+                    .put("systemInstruction", JSONObject().put("parts", JSONArray()
+                        .put(JSONObject().put("text", system))))
+                    .put("contents", JSONArray().put(JSONObject()
+                        .put("role", "user")
+                        .put("parts", JSONArray().put(JSONObject().put("text", userText)))))
+                    .put("generationConfig", JSONObject().put("temperature", 0.3))
+                val req = Request.Builder()
+                    .url("$baseUrl/v1beta/models/$m:generateContent")
+                    .post(body.toString().toRequestBody("application/json".toMediaType()))
+                    .build()
+                return http.newCall(req).execute().use { r ->
+                    val t = r.body?.string() ?: ""
+                    if (!r.isSuccessful) throw errorForHttpCode(r.code, t, "generateContent", m)
+                    parseCandidateText(t).trim()
+                }
+            } catch (e: GeminiHttpException) {
+                lastError = e
+                if (e.code == 404) continue
+                throw e
+            }
+        }
+        throw lastError ?: RuntimeException("A Gemini modellek egyike sem érhető el (404).")
+    }
+
     private fun generateWithFallback(fileUri: String, isLesson: Boolean): String {
         var lastError: Exception? = null
         for (m in modelsToTry()) {
