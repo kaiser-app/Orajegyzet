@@ -31,11 +31,25 @@ object GemmaModel {
 
     fun modelsDir(ctx: Context): File = File(ctx.filesDir, "models").apply { mkdirs() }
 
-    /** A telepített Gemma-modell, vagy null, ha nincs (vagy gyanúsan kicsi). */
-    fun file(ctx: Context): File? {
+    /**
+     * A telepített, MediaPipe által futtatható Gemma-modell, vagy null.
+     * A fejlécet is ellenőrzi: a korábbi verziók (1.0.0–1.0.2) bármilyen fájlt
+     * gemma.task néven mentettek, pl. a Gemma 4 .litertlm fájlt is.
+     */
+    fun file(ctx: Context): File? = candidates(ctx).firstOrNull { isRunnable(it) }
+
+    /** A rögzített néven ott lévő, de NEM futtatható modellfájl (pl. átnevezett Gemma 4), vagy null. */
+    fun invalidFile(ctx: Context): File? = candidates(ctx).firstOrNull { !isRunnable(it) }
+
+    private fun candidates(ctx: Context): List<File> {
         val dir = modelsDir(ctx)
         return listOf(File(dir, TASK_NAME), File(dir, BIN_NAME))
-            .firstOrNull { it.isFile && it.length() > MIN_SIZE_BYTES }
+            .filter { it.isFile && it.length() > MIN_SIZE_BYTES }
+    }
+
+    private fun isRunnable(f: File): Boolean {
+        val fmt = runCatching { detectFormat(readHeader(f)) }.getOrDefault(Format.UNKNOWN)
+        return fmt == Format.TASK || fmt == Format.TFLITE
     }
 
     /** Fejléc (első 8 bájt) + opcionálisan a fájlnév alapján felismert formátum. Tiszta függvény (unit teszt). */

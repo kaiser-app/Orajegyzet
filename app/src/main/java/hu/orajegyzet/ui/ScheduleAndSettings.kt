@@ -297,7 +297,7 @@ fun SettingsScreen(onBack: () -> Unit) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Switch(checked = s.privacyLock, onCheckedChange = { s = s.copy(privacyLock = it) })
                         Spacer(Modifier.width(8.dp))
-                        Text("Adatvédelmi zár — a hang soha nem hagyja el a készüléket")
+                        Text("Adatvédelmi zár — a hang soha nem hagyja el a készüléket (a Gemini ilyenkor nem fut)")
                     }
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Switch(checked = s.wifiOnly, onCheckedChange = { s = s.copy(wifiOnly = it) })
@@ -349,6 +349,13 @@ fun SettingsScreen(onBack: () -> Unit) {
             }
             item {
                 SettingSection("Online (Gemini)", expOnline, { expOnline = !expOnline }) {
+                    if (s.privacyLock || s.mode == Mode.OFFLINE) {
+                        Text(
+                            if (s.privacyLock) "⚠️ Az adatvédelmi zár be van kapcsolva, ezért a Gemini nem fut (minden helyben készül). A Gemini használatához kapcsold ki a zárat a Feldolgozás kártyán."
+                            else "⚠️ Offline mód van kiválasztva, ezért a Gemini nem fut. Válaszd az Online vagy az Automatikus módot.",
+                            color = MaterialTheme.colorScheme.error, fontSize = 13.sp, fontWeight = FontWeight.Medium
+                        )
+                    }
                     OutlinedTextField(
                         value = s.geminiApiKey,
                         onValueChange = { s = s.copy(geminiApiKey = it.trim()) },
@@ -454,9 +461,41 @@ fun SettingsScreen(onBack: () -> Unit) {
                             (if (modelStatus.gemmaInstalled)
                                 "telepítve ✓ – ${s.gemmaModelName.ifBlank { modelStatus.gemmaFileName ?: "" }}, " +
                                     "%.0f MB".format(modelStatus.gemmaSizeBytes / 1_000_000.0)
+                            else if (modelStatus.gemmaInvalidSizeBytes > 0) "HIBÁS FÁJL (nem futtatható)"
                             else "nincs telepítve"),
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                    if (modelStatus.gemmaInvalidSizeBytes > 0) {
+                        Text("❌ A telepített Gemma-fájl (%.0f MB) nem MediaPipe-formátumú – valószínűleg egy korábbi verzióval importált Gemma 4 (.litertlm). Ezt az 1.0.4 nem tudja futtatni; a Gemma 4 az 1.1-ben jön. Töröld, és importálj .task modellt (pl. gemma3-1b-it-int4.task)."
+                            .format(modelStatus.gemmaInvalidSizeBytes / 1_000_000.0),
+                            fontSize = 13.sp, color = MaterialTheme.colorScheme.error)
+                        OutlinedButton(onClick = {
+                            scope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                                ModelImporter.deleteInvalidGemma(ctx)
+                                modelStatus = ModelImporter.status(ctx)
+                                modelMessage = "A hibás Gemma-fájl törölve."; modelError = null
+                            }
+                        }, enabled = importing == null, modifier = Modifier.fillMaxWidth()) {
+                            Text("Hibás Gemma-fájl törlése")
+                        }
+                    }
+                    if (modelStatus.gemmaInstalled) {
+                        OutlinedButton(onClick = {
+                            importing = "Gemma teszt: betöltés és válasz…"
+                            modelMessage = null; modelError = null
+                            scope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                                ModelImporter.runCatching { testGemma(ctx) }
+                                    .onSuccess { r ->
+                                        modelMessage = "✅ Gemma működik (betöltés %.1f mp, válasz %.1f mp): "
+                                            .format(r.loadSeconds, r.answerSeconds) + r.answer
+                                    }
+                                    .onFailure { e -> modelError = e.message ?: "Ismeretlen hiba a teszt közben." }
+                                importing = null
+                            }
+                        }, enabled = importing == null, modifier = Modifier.fillMaxWidth()) {
+                            Text("Gemma modell teszt")
+                        }
+                    }
                     modelMessage?.let { Text(it, fontSize = 13.sp, color = MaterialTheme.colorScheme.primary) }
                     modelError?.let { Text("❌ $it", fontSize = 13.sp, color = MaterialTheme.colorScheme.error) }
                     importing?.let {

@@ -24,8 +24,12 @@ object ModelImporter {
         val gemmaInstalled: Boolean,
         val whisperInstalled: Boolean,
         val gemmaFileName: String? = null,
-        val gemmaSizeBytes: Long = 0
+        val gemmaSizeBytes: Long = 0,
+        /** Van modellfájl, de a MediaPipe nem tudja futtatni (pl. régi verzióval importált Gemma 4). */
+        val gemmaInvalidSizeBytes: Long = 0
     )
+
+    data class GemmaTestResult(val answer: String, val loadSeconds: Double, val answerSeconds: Double)
 
     data class GemmaImportResult(val originalName: String, val sizeBytes: Long, val loadSeconds: Double)
 
@@ -37,8 +41,26 @@ object ModelImporter {
             gemmaInstalled = gemma != null,
             whisperInstalled = File(modelsDir(ctx), "whisper.bin").let { it.isFile && it.length() > 0 },
             gemmaFileName = gemma?.name,
-            gemmaSizeBytes = gemma?.length() ?: 0
+            gemmaSizeBytes = gemma?.length() ?: 0,
+            gemmaInvalidSizeBytes = if (gemma == null) GemmaModel.invalidFile(ctx)?.length() ?: 0 else 0
         )
+    }
+
+    /** A nem futtatható (érvénytelen) Gemma-fájl törlése. */
+    fun deleteInvalidGemma(ctx: Context): Boolean = GemmaModel.invalidFile(ctx)?.delete() == true
+
+    /** Modell teszt: betöltés + egy rövid magyar kérdés, időmérással. Hibánál érthető kivételt dob. */
+    fun testGemma(ctx: Context): GemmaTestResult {
+        val f = GemmaModel.file(ctx) ?: error("Nincs futtatható Gemma-modell telepítve.")
+        try {
+            return GemmaSession.open(ctx, f).use { s ->
+                val t0 = System.currentTimeMillis()
+                val a = s.generate("Foglald össze egy mondatban: A projekt határideje péntek, a felelős Kovács Anna.", 120_000L)
+                GemmaTestResult(a, s.loadMillis / 1000.0, (System.currentTimeMillis() - t0) / 1000.0)
+            }
+        } catch (t: Throwable) {
+            throw IllegalStateException("A Gemma nem futott: ${t.message ?: t.javaClass.simpleName}", t)
+        }
     }
 
     fun importWhisper(ctx: Context, uri: Uri) {
@@ -76,9 +98,16 @@ object ModelImporter {
         val tmp = File(modelsDir(ctx), "$fixedName.part")
         tmp.delete()
 
-        ctx.contentResolver.openInputStream(uri).use { input ->
-            requireNotNull(input) { "Nem olvasható a kiválasztott fájl." }
-            tmp.outputStream().use { out -> input.copyTo(out, 1 shl 20) }
+        try {
+            ctx.contentResolver.openInputStream(uri).use { input ->
+                requireNotNull(input) { "Nem olvasható a kiválasztott fájl." }
+                tmp.outputStream().use { out -> input.copyTo(out, 1 shl 20) }
+            }
+        } catch (t: Throwable) {
+            tmp.delete()
+            throw IllegalStateException("A fájl másolása megszakadt (${t.message ?: t.javaClass.simpleName}). " +
+                "Ha a fájl felhőben vagy egy másik appban van, előbb töltsd le a telefonra, " +
+                "és a Fájlok → Letöltések mappából válaszd ki.", t)
         }
         if (tmp.length() <= GemmaModel.MIN_SIZE_BYTES) {
             tmp.delete()
@@ -99,9 +128,10 @@ object ModelImporter {
                 s.generate("Válaszolj egy szóval: OK", timeoutMs = 120_000L)
                 s.loadMillis / 1000.0
             }
-        } catch (e: Exception) {
+        } catch (t: Throwable) {
             target.delete()
-            throw IllegalStateException("A modell bemásolódott, de nem tölthető be, ezért töröltem. Ok: ${e.message}", e)
+            throw IllegalStateException("A modell bemásolódott, de a MediaPipe nem tudja betölteni, ezért töröltem. " +
+                "Ok: ${t.message ?: t.javaClass.simpleName}", t)
         }
 
         runBlocking { Settings.setGemmaModelName(ctx, originalName) }
