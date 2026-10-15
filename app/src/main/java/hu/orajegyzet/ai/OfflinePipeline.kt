@@ -175,12 +175,15 @@ class OfflinePipeline(
             val processed = cleanLoops(finalText)
             if (processed.length < (if (styled) 20 else 40))
                 return fallback("A Gemma válasza üres vagy túl rövid volt. Kivonat látható.")
-            // A kért szerkezet szavai (pl. „Határozatok", „Felelős") nem számítanak kitaláltnak.
-            if (!verifySourceCoherence(processed, clean, allowedText = instruction)) {
-                return fallback("A Gemma válasza nem egyezett a leirattal (hallucináció-szűrő), ezért elvetettem. Kivonat látható.")
+            // 1.1.2: a kért szerkezet szavai (pl. „Határozatok", „Felelős") nem számítanak kitaláltnak;
+            // a Gemma szövege csak nagyon alacsony egyezésnél vész el, különben figyelmeztetéssel marad.
+            val check = checkCoherence(processed, clean, allowedText = instruction)
+            Log.i("FuleloAI", "summary coherence=${check.percent}% names=${check.unknownNames} numbers=${check.unknownNumbers}")
+            if (check.verdict == CoherenceVerdict.REJECT) {
+                return fallback("A Gemma válasza alig kapcsolódott a leirathoz (egyezés: ${check.percent}%), ezért elvetettem. Kivonat látható.")
             }
             Log.i("FuleloAI", "summary engine=GEMMA load=${session.loadMillis}ms")
-            return StyleResult(processed, SummaryEngine.GEMMA)
+            return StyleResult(processed, SummaryEngine.GEMMA, check.warning())
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
             return fallback("A Gemma nem futott: ${e.message}. Kivonat látható.")
@@ -553,6 +556,51 @@ class OfflinePipeline(
                 out += line
             }
             return out.joinToString("\n").trimEnd()
+        }
+
+        const val REJECT_RATIO = Coherence.REJECT_RATIO
+        const val WARN_RATIO = Coherence.WARN_RATIO
+
+        private val WORD = Regex("[\\p{L}\\p{Nd}]+")
+        private val LIST_MARKER = Regex("^\\s*(\\|\\s*\\d+\\s*\\||\\d+[.)])")
+
+        private fun stems(text: String): Set<String> = WORD.findAll(text)
+            .map { it.value.lowercase() }
+            .filter { it.length >= 4 && it !in Extractive.STOP }
+            .map { it.take(5) }
+            .toSet()
+
+        fun checkCoherence(summaryText: String, sourceText: String, allowedText: String = ""): Coherence {
+            val sourceStems = stems("$sourceText $allowedText")
+            val summaryStems = WORD.findAll(summaryText)
+                .map { it.value.lowercase() }
+                .filter { it.length >= 4 && it !in Extractive.STOP }
+                .map { it.take(5) }
+                .toList()
+            val ratio = if (sourceStems.isEmpty() || summaryStems.isEmpty()) 1.0
+                else summaryStems.count { it in sourceStems }.toDouble() / summaryStems.size
+
+            // Nevek: nagybetűs szó, amely nem mondat/sor/cella elején áll, és a forrásban (kisbetűsen) sincs.
+            val names = linkedSetOf<String>()
+            for (line in summaryText.lines()) {
+                val sentences = line.split(Regex("(?<=[.!?:])\\s+|\\|"))
+                for (sent in sentences) {
+                    val words = WORD.findAll(sent.replace("*", " ")).map { it.value }.toList()
+                    words.drop(1).filter { w ->
+                        w.length >= 3 && w[0].isUpperCase() && w.drop(1).any { it.isLowerCase() } &&
+                            w.lowercase().take(5) !in sourceStems
+                    }.forEach { names += it }
+                }
+            }
+
+            // Számok: a lista-/táblázatsorszámokat kihagyjuk.
+            val sourceNumbers = Regex("\\d+").findAll("$sourceText $allowedText").map { it.value }.toSet()
+            val numbers = linkedSetOf<String>()
+            for (line in summaryText.lines()) {
+                Regex("\\d+").findAll(line.replaceFirst(LIST_MARKER, " ")).map { it.value }
+                    .filter { it !in sourceNumbers }.forEach { numbers += it }
+            }
+            return Coherence(ratio, names.take(5), numbers.take(5))
         }
 
         fun verifySourceCoherence(summaryText: String, sourceText: String, allowedText: String = ""): Boolean {

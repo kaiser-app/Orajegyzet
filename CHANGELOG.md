@@ -1,5 +1,15 @@
 # Változási Napló (Changelog) – AssiSten-s (korábban Fülelő Hangjegyzet)
 
+## 1.1.2 (versionCode 9) – Enyhébb, de név- és számérzékeny ellenőrzés
+
+- **Hibajavítás:** a Gemma-összefoglaló gyakran elveszett a „hallucináció-szűrő” miatt. A régi szűrő a szavak 60%-os egyezését várta a leirattal, ami átfogalmazó összefoglalónál (és Whisper-elírásoknál) túl szigorú.
+- Új egyezésvizsgálat (`Coherence`):
+  - 20% alatt: a válasz elvetve, kivonat készül (a figyelmeztetés megmutatja a pontos egyezést);
+  - 20–35% között: a Gemma szövege **megmarad**, sárga figyelmeztetéssel és az egyezés százalékával;
+  - külön jelzés, ha az összefoglalóban **a leiratban nem szereplő név vagy szám** van (a lista- és táblázatsorszámok nem számítanak).
+- A figyelmeztető kártyán új **„Kivonat”** gomb: egy érintéssel látható a nem AI-s kivonat is.
+- A projektjelentések Gemma-ága ugyanezt a logikát használja.
+
 ## 1.1.1 (versionCode 8) – Valóban eltérő összefoglaló-típusok, átlátható Gemma-beállítás
 
 - **Hibajavítás – egyforma összefoglalók:** a „Vezetői / Jegyzőkönyv / Teendők / Részletes jegyzet” gombok eddig ugyanazt a JSON-alapú, 8–12 mondatos jegyzetet kérték (Geminin), illetve ugyanazt a „foglald össze N mondatban” utasítást (Gemmán). Mostantól minden típus saját szerkezetet ír elő (`SummaryStyles`):

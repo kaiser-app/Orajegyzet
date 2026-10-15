@@ -192,4 +192,48 @@ class SummaryStylesTest {
         assertEquals(1, Regex("Kovács Anna").findAll(out).count())
         assertTrue(out.contains("\n"))
     }
+
+    // ---------- 1.1.2: enyhébb, de név/szám-érzékeny egyezésvizsgálat ----------
+
+    private val auditSource = "Ma az ISO 27001 auditról beszéltünk. Kovács Anna elkészíti a kockázatelemzést " +
+        "október 20-ig. Péter frissíti a jelszókezelési szabályzatot. A tesztelés a jövő héten indul."
+
+    @Test fun paraphrasedSummaryIsKeptWithoutWarning() {
+        val summary = "**Lényeg:** az ISO 27001 audit előkészítése.\n**Döntések:** Kovács Anna kockázatelemzést készít " +
+            "október 20-ig, Péter frissíti a jelszókezelési szabályzatot."
+        val c = OfflinePipeline.checkCoherence(summary, auditSource, SummaryStyles.instruction(SummaryStyles.Style.EXECUTIVE))
+        assertEquals(CoherenceVerdict.OK, c.verdict)
+        assertNull(c.warning())
+    }
+
+    @Test fun moderateParaphraseIsKeptWithWarning() {
+        val summary = "A résztvevők áttekintették a megfelelőségi felkészülést, a dokumentáció hiányosságait, " +
+            "a munkamegosztást és az ütemezést; a kockázatelemzés Kovács Anna feladata."
+        val c = OfflinePipeline.checkCoherence(summary, auditSource)
+        assertTrue(c.ratio >= OfflinePipeline.REJECT_RATIO)
+        assertEquals(CoherenceVerdict.WARN, c.verdict)
+        assertTrue(c.warning()!!.contains("%"))
+    }
+
+    @Test fun inventedNameAndNumberAreFlagged() {
+        val summary = "Kovács Anna és Szabó Gergely elkészíti a kockázatelemzést október 20-ig, a keret 500 ezer forint."
+        val c = OfflinePipeline.checkCoherence(summary, auditSource)
+        assertTrue(c.unknownNames.contains("Szabó"))
+        assertTrue(c.unknownNumbers.contains("500"))
+        assertFalse(c.unknownNumbers.contains("20"))
+        assertEquals(CoherenceVerdict.WARN, c.verdict)
+    }
+
+    @Test fun listAndTableNumbersAreNotFlagged() {
+        val summary = "| # | Feladat | Felelős | Határidő |\n|---|---|---|---|\n| 1 | Kockázatelemzés | Kovács Anna | október 20 |\n" +
+            "| 2 | Szabályzat frissítése | Péter | nincs megadva |"
+        val c = OfflinePipeline.checkCoherence(summary, auditSource, SummaryStyles.instruction(SummaryStyles.Style.ACTIONS))
+        assertTrue(c.unknownNumbers.isEmpty())
+        assertTrue(c.unknownNames.isEmpty())
+    }
+
+    @Test fun unrelatedTextIsRejected() {
+        val summary = "A focicsapat vasárnap bajnokságot nyert, a szurkolók ünnepeltek a stadionban."
+        assertEquals(CoherenceVerdict.REJECT, OfflinePipeline.checkCoherence(summary, auditSource).verdict)
+    }
 }

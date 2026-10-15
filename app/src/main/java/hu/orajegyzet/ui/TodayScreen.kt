@@ -611,10 +611,18 @@ fun NoteDetailScreen(noteId: Long, onBack: () -> Unit) {
                         Column(Modifier.fillMaxWidth().padding(12.dp)) {
                             Text("⚠️ ${n.summaryWarning}", fontSize = 13.sp, color = Color(0xFF5C4400))
                             Spacer(Modifier.height(6.dp))
-                            OutlinedButton(onClick = {
-                                scope.launch { db.noteDao().update(n.copy(status = NoteStatus.PROCESSING, error = "")) }
-                                ProcessingWorker.resummarize(ctx, n.id)
-                            }) { Text("Összefoglaló újra") }
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                OutlinedButton(onClick = {
+                                    scope.launch { db.noteDao().update(n.copy(status = NoteStatus.PROCESSING, error = "")) }
+                                    ProcessingWorker.resummarize(ctx, n.id)
+                                }) { Text("Összefoglaló újra", maxLines = 1) }
+                                if (n.summaryEngine == hu.orajegyzet.ai.SummaryEngine.GEMMA && n.transcript.isNotBlank()) {
+                                    OutlinedButton(onClick = {
+                                        selectedCustomPrompt = "Kivonat (nem AI)"
+                                        customSummaryResult = Extractive.summarize(n.transcript, 8)
+                                    }) { Text("Kivonat", maxLines = 1) }
+                                }
+                            }
                         }
                     }
                 }

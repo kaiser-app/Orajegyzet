@@ -226,11 +226,15 @@ object ReportBuilder {
                     text.length < 40 -> warning = listOfNotNull(warning, "A Gemma válasza üres vagy túl rövid volt.").joinToString(" ")
                     OfflinePipeline.echoesPrompt(text, instruction(type)) ->
                         warning = listOfNotNull(warning, "A Gemma a kérést ismételte vissza.").joinToString(" ")
-                    !OfflinePipeline.verifySourceCoherence(text, facts) ->
-                        warning = listOfNotNull(warning, "A Gemma válasza nem egyezett a tényekkel, elvetettem.").joinToString(" ")
                     else -> {
-                        Log.i("FuleloAI", "report=$type engine=GEMMA")
-                        return Report(text, SummaryEngine.GEMMA, warning)
+                        val check = OfflinePipeline.checkCoherence(text, facts, allowedText = prompt(type, facts))
+                        if (check.verdict == CoherenceVerdict.REJECT) {
+                            warning = listOfNotNull(warning,
+                                "A Gemma válasza alig kapcsolódott a tényekhez (egyezés: ${check.percent}%), elvetettem.").joinToString(" ")
+                        } else {
+                            Log.i("FuleloAI", "report=$type engine=GEMMA coherence=${check.percent}%")
+                            return Report(text, SummaryEngine.GEMMA, listOfNotNull(warning, check.warning()).joinToString(" ").ifBlank { null })
+                        }
                     }
                 }
             } catch (e: Exception) {
