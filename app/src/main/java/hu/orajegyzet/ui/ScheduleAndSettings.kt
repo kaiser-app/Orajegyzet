@@ -283,17 +283,6 @@ fun SettingsScreen(onBack: () -> Unit) {
             }
             item {
                 SettingSection("Feldolgozás", expProc, { expProc = !expProc }) {
-                    Text("Mód", fontWeight = FontWeight.Medium)
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Mode.entries.forEach { m ->
-                            FilterChip(selected = s.mode == m, onClick = { s = s.copy(mode = m) },
-                                label = {
-                                    Text(when (m) {
-                                        Mode.OFFLINE -> "Offline"; Mode.ONLINE -> "Online"; Mode.AUTO -> "Automatikus"
-                                    })
-                                })
-                        }
-                    }
                     Text("Alap elemző", fontWeight = FontWeight.Medium)
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         FilterChip(selected = !s.preferGemini, onClick = { s = s.copy(preferGemini = false) },
@@ -302,37 +291,31 @@ fun SettingsScreen(onBack: () -> Unit) {
                             label = { Text("Gemini (felhő)") })
                     }
                     Text(
-                        if (s.preferGemini) "A Gemini fut, ha a mód és a hálózat engedi; különben a Gemma 4."
-                        else "A Gemma 4 fut a telefonon; a Gemini csak akkor, ha nincs telepített Gemma-modell.",
+                        if (s.preferGemini) "A hangot a Gemini írja át és elemzi. Hálózat nélkül automatikusan " +
+                            "helyben készül (Whisper + Gemma 4)."
+                        else "Minden a telefonon készül (Whisper + Gemma 4). A Gemini csak kérésre fut, " +
+                            "pl. „Újrafogalmazás Geminivel”.",
                         color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp
                     )
+                    if (s.preferGemini) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Switch(checked = s.wifiOnly, onCheckedChange = { s = s.copy(wifiOnly = it) })
+                            Spacer(Modifier.width(8.dp))
+                            Text("Gemini csak Wi-Fi-n (mobilneten helyben készül)")
+                        }
+                    }
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Switch(checked = s.privacyLock, onCheckedChange = { s = s.copy(privacyLock = it) })
                         Spacer(Modifier.width(8.dp))
-                        Text("Adatvédelmi zár — a hang soha nem hagyja el a készüléket (a Gemini ilyenkor nem fut)")
+                        Text("Adatvédelmi zár — a hang és a szöveg soha nem hagyja el a készüléket (kérésre sem fut Gemini)")
                     }
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Switch(checked = s.wifiOnly, onCheckedChange = { s = s.copy(wifiOnly = it) })
-                        Spacer(Modifier.width(8.dp))
-                        Text("Online feldolgozás csak Wi-Fi-n")
-                    }
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Switch(checked = s.useGemma, onCheckedChange = { s = s.copy(useGemma = it) })
-                        Spacer(Modifier.width(8.dp))
-                        Text("Gemma 4 használata (helyi összefoglaló; ki: csak kivonat)")
-                    }
-                    // 1.1.1: egyértelmű kijelzés, mi fog ténylegesen futni a mostani beállításokkal
-                    val geminiPossible = !s.privacyLock && s.geminiApiKey.isNotBlank() && s.mode != Mode.OFFLINE
-                    val gemmaReady = s.useGemma && modelStatus.gemmaInstalled
-                    val effective = when {
-                        !geminiPossible && gemmaReady -> "Leirat: Whisper (helyben) · Elemzés: Gemma 4 (helyben)"
-                        !geminiPossible -> "Leirat: Whisper (helyben) · Elemzés: kivonat (nem AI) – " +
-                            (if (!s.useGemma) "a Gemma ki van kapcsolva" else "nincs telepített Gemma-modell")
-                        !s.preferGemini && gemmaReady -> "Leirat: Whisper (helyben) · Elemzés: Gemma 4 (helyben); a Gemini csak kérésre"
-                        s.mode == Mode.AUTO -> "Leirat és elemzés: Gemini (hálózat nélkül: Whisper + " +
-                            (if (gemmaReady) "Gemma 4)" else "kivonat)")
-                        else -> "Leirat és elemzés: Gemini (felhő)"
-                    }
+                    // 1.1.3: egyértelmű kijelzés, mi fog ténylegesen futni a mostani beállításokkal
+                    val effective = hu.orajegyzet.ai.EngineRouting.describe(
+                        preferGemini = s.preferGemini,
+                        privacyLock = s.privacyLock,
+                        hasApiKey = s.geminiApiKey.isNotBlank(),
+                        gemmaInstalled = modelStatus.gemmaInstalled
+                    )
                     Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) {
                         Text("Jelenleg: $effective", modifier = Modifier.padding(10.dp), fontSize = 13.sp,
                             fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onSecondaryContainer)
@@ -377,12 +360,12 @@ fun SettingsScreen(onBack: () -> Unit) {
             }
             item {
                 SettingSection("Online (Gemini)", expOnline, { expOnline = !expOnline }) {
-                    if (s.privacyLock || s.mode == Mode.OFFLINE || (!s.preferGemini && modelStatus.gemmaInstalled)) {
+                    if (s.privacyLock || !s.preferGemini) {
                         Text(
                             if (s.privacyLock) "⚠️ Az adatvédelmi zár be van kapcsolva, ezért a Gemini nem fut (minden helyben készül). A Gemini használatához kapcsold ki a zárat a Feldolgozás kártyán."
-                            else if (s.mode == Mode.OFFLINE) "⚠️ Offline mód van kiválasztva, ezért a Gemini nem fut. Válaszd az Online vagy az Automatikus módot."
-                            else "ℹ️ Az alap elemző a Gemma 4, ezért a Gemini csak kérésre fut (pl. „Újrafogalmazás Geminivel”). Átállítás: Feldolgozás → Alap elemző.",
-                            color = MaterialTheme.colorScheme.error, fontSize = 13.sp, fontWeight = FontWeight.Medium
+                            else "ℹ️ Az alap elemző a Gemma 4, ezért a Gemini csak kérésre fut (pl. „Újrafogalmazás Geminivel”), vagy ha nincs telepített Gemma-modell. Átállítás: Feldolgozás → Alap elemző.",
+                            color = if (s.privacyLock) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontSize = 13.sp, fontWeight = FontWeight.Medium
                         )
                     }
                     OutlinedTextField(

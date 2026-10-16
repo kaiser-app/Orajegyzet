@@ -21,6 +21,8 @@ class App : Application() {
         createChannels()
         appScope.launch {
             runCatching { Settings.migrateSecretsIfNeeded(this@App) }
+            // 1.1.3: Mód + Gemma-kapcsoló megszűnt → egyszeri átállás az alap elemzőre
+            runCatching { Settings.migrateProcessingSettingsIfNeeded(this@App) }
             ProjectSeed.seedIfNeeded(this@App)
             // 1.0.4: iskolai mód kezdőértéke (frissítéskor: be, ha van felvitt óra), majd alkalmazása
             runCatching {

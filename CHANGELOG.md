@@ -1,5 +1,17 @@
 # Változási Napló (Changelog) – AssiSten-s (korábban Fülelő Hangjegyzet)
 
+## 1.1.3 (versionCode 10) – Egyszerűbb Feldolgozás-beállítások
+
+- **A „Mód” sor (Offline / Online / Automatikus) megszűnt.** A működés mindig automatikus, a motort az **Alap elemző** dönti el:
+  - Gemma 4 (helyben): minden a telefonon készül (Whisper + Gemma 4); a Gemini csak kérésre;
+  - Gemini (felhő): a Gemini ír át és elemez; hálózat nélkül automatikusan helyben készül.
+- **A „Gemma 4 használata” kapcsoló megszűnt:** ha telepítve van, a Gemma mindig rendelkezésre áll.
+- A „csak Wi-Fi-n” kapcsoló csak Gemini alap elemzőnél látszik.
+- Megmaradt: **Adatvédelmi zár** (kérésre sem fut Gemini).
+- Egyszeri átállás frissítéskor: Offline mód → Gemma 4 alap elemző; Online mód → Gemini alap elemző.
+- A színtéma az alap elemzőt követi: Gemma 4 vagy zár = borostyán, Gemini = zöld.
+- Új tiszta döntési logika (`EngineRouting`) tesztekkel; a „Jelenleg:” sor is ebből készül.
+
 ## 1.1.2 (versionCode 9) – Enyhébb, de név- és számérzékeny ellenőrzés
 
 - **Hibajavítás:** a Gemma-összefoglaló gyakran elveszett a „hallucináció-szűrő” miatt. A régi szűrő a szavak 60%-os egyezését várta a leirattal, ami átfogalmazó összefoglalónál (és Whisper-elírásoknál) túl szigorú.

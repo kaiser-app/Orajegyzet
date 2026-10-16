@@ -44,9 +44,9 @@ class MainActivity : ComponentActivity() {
         setContent {
             val settings by hu.orajegyzet.data.Settings.flow(this)
                 .collectAsState(initial = hu.orajegyzet.data.AppSettings())
-            // A téma a kiválasztott mód szerint vált: offline (privacy/OFFLINE) = meleg
-            // borostyán; minden más (ONLINE/AUTO) = hűvös zöld.
-            val online = !(settings.privacyLock || settings.mode == hu.orajegyzet.data.Mode.OFFLINE)
+            // A téma az alap elemző szerint vált (1.1.3): Gemma 4 vagy adatvédelmi zár = meleg
+            // borostyán (helyben); Gemini = hűvös zöld (felhő).
+            val online = settings.preferGemini && !settings.privacyLock
 
             hu.orajegyzet.ui.OraJegyzetTheme(online = online) {
                 Surface(color = MaterialTheme.colorScheme.background) {

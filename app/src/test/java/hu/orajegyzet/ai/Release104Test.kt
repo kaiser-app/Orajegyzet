@@ -237,3 +237,34 @@ class SummaryStylesTest {
         assertEquals(CoherenceVerdict.REJECT, OfflinePipeline.checkCoherence(summary, auditSource).verdict)
     }
 }
+
+/** 1.1.3: a „Mód” megszűnt – a motort az alap elemző, a zár és a hálózat dönti el. */
+class EngineRoutingTest {
+    private fun d(preferGemini: Boolean, lock: Boolean = false, key: Boolean = true, gemma: Boolean = true, net: Boolean = true) =
+        EngineRouting.decide(preferGemini, lock, key, gemma, net)
+
+    @Test fun gemmaDefaultStaysLocalEvenWithNetwork() =
+        assertEquals(EngineRouting.Route.GEMMA, d(preferGemini = false))
+
+    @Test fun geminiDefaultUsesCloudWithNetwork() =
+        assertEquals(EngineRouting.Route.GEMINI, d(preferGemini = true))
+
+    @Test fun geminiDefaultFallsBackToGemmaOffline() =
+        assertEquals(EngineRouting.Route.GEMMA, d(preferGemini = true, net = false))
+
+    @Test fun privacyLockNeverUsesGemini() {
+        assertEquals(EngineRouting.Route.GEMMA, d(preferGemini = true, lock = true))
+        assertEquals(EngineRouting.Route.EXTRACTIVE, d(preferGemini = false, lock = true, gemma = false))
+    }
+
+    @Test fun missingGemmaFallsBackToGeminiThenExtract() {
+        assertEquals(EngineRouting.Route.GEMINI, d(preferGemini = false, gemma = false))
+        assertEquals(EngineRouting.Route.EXTRACTIVE, d(preferGemini = false, gemma = false, net = false))
+    }
+
+    @Test fun noApiKeyMeansLocal() =
+        assertEquals(EngineRouting.Route.GEMMA, d(preferGemini = true, key = false))
+
+    @Test fun describeMentionsLock() =
+        assertTrue(EngineRouting.describe(true, true, true, true).contains("adatvédelmi zár"))
+}

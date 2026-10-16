@@ -122,6 +122,7 @@ object Settings {
     private val GEMMA_MODEL_NAME = stringPreferencesKey("gemma_model_name")
     private val SCHOOL_MODE = booleanPreferencesKey("school_mode")
     private val PREFER_GEMINI = booleanPreferencesKey("prefer_gemini")
+    private val PROC_V113 = booleanPreferencesKey("processing_settings_v113")
 
     suspend fun migrateSecretsIfNeeded(ctx: Context) {
         try {
@@ -195,6 +196,25 @@ object Settings {
             if (cur == null) p[SCHOOL_MODE] = hasLessons else result = cur
         }
         return result
+    }
+
+    /**
+     * 1.1.3: a „Mód” és a „Gemma 4 használata” kapcsoló megszűnt. Egyszeri átállás:
+     *  - Offline mód → alap elemző: Gemma 4 (semmi nem kerül váratlanul felhőbe);
+     *  - Online mód → alap elemző: Gemini;
+     *  - a mód ezután mindig Automatikus, a Gemma (ha telepítve van) mindig használható.
+     */
+    suspend fun migrateProcessingSettingsIfNeeded(ctx: Context) {
+        ctx.ds.edit { p ->
+            if (p[PROC_V113] == true) return@edit
+            when (p[MODE]) {
+                Mode.OFFLINE.name -> p[PREFER_GEMINI] = false
+                Mode.ONLINE.name -> p[PREFER_GEMINI] = true
+            }
+            p[MODE] = Mode.AUTO.name
+            p[USE_GEMMA] = true
+            p[PROC_V113] = true
+        }
     }
 
     suspend fun save(ctx: Context, s: AppSettings) {

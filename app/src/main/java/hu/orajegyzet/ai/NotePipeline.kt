@@ -56,30 +56,21 @@ interface NotePipeline {
 object ModeSelector {
 
     /**
-     * true = Gemini (online), false = helyi (Whisper + Gemma).
-     * 1.1: az alap elemző a Gemma 4; a Gemini csak akkor fut, ha a felhasználó azt választotta
-     * alapnak, vagy ha nincs futtatható Gemma-modell (és a mód/hálózat engedi).
+     * true = Gemini (online), false = helyi (Whisper + Gemma / kivonat).
+     * 1.1.3: a döntést az alap elemző + adatvédelmi zár + hálózat adja (EngineRouting);
+     * a régi „Mód” beállítás már nem számít.
      */
-    fun choose(ctx: Context, s: AppSettings): Boolean /* true = online */ {
-        if (s.privacyLock) return false
-        if (s.geminiApiKey.isBlank()) return false
-        if (!s.preferGemini && s.useGemma && GemmaModel.file(ctx) != null) return false
-        return when (s.mode) {
-            Mode.OFFLINE -> false
-            Mode.ONLINE -> true
-            Mode.AUTO -> hasNetwork(ctx, s.wifiOnly)
-        }
-    }
+    fun choose(ctx: Context, s: AppSettings): Boolean /* true = online */ =
+        EngineRouting.decide(
+            preferGemini = s.preferGemini,
+            privacyLock = s.privacyLock,
+            hasApiKey = s.geminiApiKey.isNotBlank(),
+            gemmaInstalled = GemmaModel.file(ctx) != null,
+            network = !s.privacyLock && hasNetwork(ctx, s.wifiOnly)
+        ) == EngineRouting.Route.GEMINI
 
-    /**
-     * Interaktív (felhasználó által indított) AI-hívásokhoz: csak akkor online, ha a mód
-     * megengedi ÉS ténylegesen van (megfelelő) hálózat — „Online" módban is ellenőriz.
-     */
-    fun canUseGeminiNow(ctx: Context, s: AppSettings): Boolean {
-        if (s.privacyLock || s.geminiApiKey.isBlank() || s.mode == Mode.OFFLINE) return false
-        if (!s.preferGemini && s.useGemma && GemmaModel.file(ctx) != null) return false
-        return hasNetwork(ctx, s.wifiOnly)
-    }
+    /** Interaktív (felhasználó által indított) AI-hívásokhoz – ugyanaz a döntés. */
+    fun canUseGeminiNow(ctx: Context, s: AppSettings): Boolean = choose(ctx, s)
 
     fun hasNetwork(ctx: Context, wifiOnly: Boolean): Boolean {
         val cm = ctx.getSystemService(ConnectivityManager::class.java)
