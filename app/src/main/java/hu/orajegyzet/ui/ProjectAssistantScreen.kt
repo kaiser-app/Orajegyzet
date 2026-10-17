@@ -43,6 +43,8 @@ fun ProjectAssistantScreen(onBack: () -> Unit, onOpenNote: (Long) -> Unit) {
         .collectAsState(initial = emptyList())
     val meetings by db.noteDao().byProject(activeProject?.id ?: "prj-01")
         .collectAsState(initial = emptyList())
+    val savedReports by db.aiReportDao().byProject(activeProject?.id ?: "prj-01")
+        .collectAsState(initial = emptyList())
 
     var granularity by remember { mutableStateOf(Granularity.EXECUTIVE) }
     var selectedTab by remember { mutableIntStateOf(0) } // 0 = Döntési napló, 1 = Gantt / WBS, 2 = Megbeszélések
@@ -61,6 +63,10 @@ fun ProjectAssistantScreen(onBack: () -> Unit, onOpenNote: (Long) -> Unit) {
     var aiReportWarning by remember { mutableStateOf<String?>(null) }
     var aiReportBusy by remember { mutableStateOf(false) }
     var canRephraseWithGemini by remember { mutableStateOf(false) }
+    /** 1.1.5: a megjelenített jelentés újrafogalmazása (projektjelentés vagy havi). */
+    var rephraseAction by remember { mutableStateOf<(() -> Unit)?>(null) }
+    var showMonthPicker by remember { mutableStateOf(false) }
+    var reportToDelete by remember { mutableStateOf<hu.orajegyzet.data.AiReport?>(null) }
 
     // --- AI Jelentés Generáló (1.0.4: tényblokk + Gemini / Gemma / offline vázlat) ---
     fun runAiAnalysis(type: String, forceGemini: Boolean = false) {
@@ -82,12 +88,52 @@ fun ProjectAssistantScreen(onBack: () -> Unit, onOpenNote: (Long) -> Unit) {
                 aiReportWarning = r.warning
                 canRephraseWithGemini = r.engine != SummaryEngine.GEMINI && !s.privacyLock &&
                     s.geminiApiKey.isNotBlank() && ModeSelector.hasNetwork(ctx, s.wifiOnly)
+                rephraseAction = { runAiAnalysis(type, forceGemini = true) }
+                // 1.1.5: minden elkészült jelentés mentődik (Jelentések fül, havi összefoglaló forrása)
+                hu.orajegyzet.ai.ReportArchive.save(ctx, type, "$type – ${prj.code}", r.text, r.engine, r.warning,
+                    projectId = prj.id)
             } catch (e: Exception) {
                 aiReportText = "Hiba történt a jelentés készítése során: ${e.message}"
             } finally {
                 aiReportBusy = false
             }
         }
+    }
+
+    // --- 1.1.5: Havi összefoglaló (a hónap megbeszéléseiből és mentett jelentéseiből) ---
+    fun runMonthly(month: java.time.YearMonth, forceGemini: Boolean = false) {
+        val prj = activeProject ?: return
+        aiReportTitle = "${ReportBuilder.MONTHLY} – $month"
+        aiReportEngine = null
+        aiReportWarning = null
+        aiReportBusy = true
+        aiReportText = if (forceGemini) "Újrafogalmazás Geminivel…" else "Havi összefoglaló készítése ($month)…"
+        scope.launch(Dispatchers.IO) {
+            try {
+                val s = Settings.get(ctx)
+                val (r, _) = hu.orajegyzet.ai.ReportArchive.createMonthly(ctx, s, prj, month, forceGemini)
+                aiReportText = r.text
+                aiReportEngine = r.engine
+                aiReportWarning = r.warning
+                canRephraseWithGemini = r.engine != SummaryEngine.GEMINI && !s.privacyLock &&
+                    s.geminiApiKey.isNotBlank() && ModeSelector.hasNetwork(ctx, s.wifiOnly)
+                rephraseAction = { runMonthly(month, forceGemini = true) }
+            } catch (e: Exception) {
+                aiReportText = "Hiba történt a havi összefoglaló készítése során: ${e.message}"
+            } finally {
+                aiReportBusy = false
+            }
+        }
+    }
+
+    fun openSaved(r: hu.orajegyzet.data.AiReport) {
+        aiReportTitle = r.title
+        aiReportText = r.text
+        aiReportEngine = r.engine
+        aiReportWarning = r.warning
+        aiReportBusy = false
+        canRephraseWithGemini = false
+        rephraseAction = null
     }
 
     Scaffold(
@@ -250,12 +296,17 @@ fun ProjectAssistantScreen(onBack: () -> Unit, onOpenNote: (Long) -> Unit) {
                                 Text("🛡️ QA Audit", fontSize = 12.sp, maxLines = 1)
                             }
                         }
+                        item {
+                            OutlinedButton(onClick = { showMonthPicker = true }) {
+                                Text("📅 Havi összefoglaló", fontSize = 12.sp, maxLines = 1)
+                            }
+                        }
                     }
                 }
 
                 // 4. Tabok: Döntési Napló (0) vs Gantt WBS (1) vs Megbeszélések (2)
                 item {
-                    TabRow(selectedTabIndex = selectedTab) {
+                    ScrollableTabRow(selectedTabIndex = selectedTab, edgePadding = 0.dp) {
                         Tab(
                             selected = selectedTab == 0,
                             onClick = { selectedTab = 0 },
@@ -270,6 +321,11 @@ fun ProjectAssistantScreen(onBack: () -> Unit, onOpenNote: (Long) -> Unit) {
                             selected = selectedTab == 2,
                             onClick = { selectedTab = 2 },
                             text = { Text("Megbeszélések (${meetings.size})", maxLines = 1) }
+                        )
+                        Tab(
+                            selected = selectedTab == 3,
+                            onClick = { selectedTab = 3 },
+                            text = { Text("Jelentések (${savedReports.size})", maxLines = 1) }
                         )
                     }
                 }
@@ -427,6 +483,42 @@ fun ProjectAssistantScreen(onBack: () -> Unit, onOpenNote: (Long) -> Unit) {
                     }
                 }
 
+                // Tab 3: Mentett jelentések és összefoglalók (1.1.5)
+                if (selectedTab == 3) {
+                    item {
+                        Text("Mentett AI-jelentések és összefoglalók", fontWeight = FontWeight.Bold)
+                    }
+                    if (savedReports.isEmpty()) {
+                        item {
+                            Text(
+                                "Még nincs mentett jelentés. Az AI-jelentések (Vezetői, Státusz, QA, Havi) és a jegyzetek " +
+                                    "típusos összefoglalói elkészültükkor automatikusan ide kerülnek.",
+                                color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp
+                            )
+                        }
+                    }
+                    items(savedReports, key = { it.id }) { r ->
+                        Card(onClick = { openSaved(r) }) {
+                            Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Column(Modifier.weight(1f)) {
+                                    Text(r.title, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                    Text(
+                                        java.time.Instant.ofEpochMilli(r.createdAt).atZone(java.time.ZoneId.systemDefault())
+                                            .toLocalDateTime().toString().take(16).replace('T', ' ') +
+                                            (r.engine?.let { SummaryEngine.label(it) }?.let { " · $it" } ?: ""),
+                                        fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    Text(
+                                        r.text.replace(Regex("[*#|_]"), "").replace(Regex("\\s+"), " ").take(110) + "…",
+                                        fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2
+                                    )
+                                }
+                                IconButton(onClick = { reportToDelete = r }) { Text("🗑", fontSize = 16.sp) }
+                            }
+                        }
+                    }
+                }
+
                 // Tab 2: Megbeszélések
                 if (selectedTab == 2) {
                     item {
@@ -487,12 +579,50 @@ fun ProjectAssistantScreen(onBack: () -> Unit, onOpenNote: (Long) -> Unit) {
                 }
             },
             dismissButton = {
-                if (!aiReportBusy && canRephraseWithGemini && aiReportTitle != null) {
-                    TextButton(onClick = { runAiAnalysis(aiReportTitle!!, forceGemini = true) }) {
+                val again = rephraseAction
+                if (!aiReportBusy && canRephraseWithGemini && again != null) {
+                    TextButton(onClick = { again() }) {
                         Text("Újrafogalmazás Geminivel")
                     }
                 }
             }
+        )
+    }
+
+    // --- 1.1.5: Hónap választása a havi összefoglalóhoz ---
+    if (showMonthPicker) {
+        AlertDialog(
+            onDismissRequest = { showMonthPicker = false },
+            title = { Text("Havi összefoglaló") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("A hónap megbeszéléseiből, mentett jelentéseiből, döntéseiből és feladataiból készül, " +
+                        "és a Jelentések fülre mentődik.", fontSize = 13.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    hu.orajegyzet.ai.ReportArchive.recentMonths().forEach { m ->
+                        OutlinedButton(onClick = { showMonthPicker = false; runMonthly(m) },
+                            modifier = Modifier.fillMaxWidth()) {
+                            Text(m.toString())
+                        }
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { showMonthPicker = false }) { Text("Mégse") } }
+        )
+    }
+
+    reportToDelete?.let { r ->
+        AlertDialog(
+            onDismissRequest = { reportToDelete = null },
+            title = { Text("Jelentés törlése") },
+            text = { Text("Biztosan törlöd: „${r.title}”?") },
+            confirmButton = {
+                TextButton(onClick = {
+                    scope.launch(Dispatchers.IO) { db.aiReportDao().delete(r) }
+                    reportToDelete = null
+                }) { Text("Törlés", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = { TextButton(onClick = { reportToDelete = null }) { Text("Mégse") } }
         )
     }
 
@@ -564,6 +694,7 @@ fun ProjectAssistantScreen(onBack: () -> Unit, onOpenNote: (Long) -> Unit) {
                         scope.launch(Dispatchers.IO) {
                             db.projectEventDao().deleteByProject(activeProject.id)
                             db.ganttTaskDao().deleteByProject(activeProject.id)
+                            db.aiReportDao().deleteByProject(activeProject.id)
                             db.projectDao().delete(activeProject)
                         }
                         showDeleteProjectConfirm = false

@@ -318,3 +318,54 @@ class ModelInfoTest {
         assertTrue(WhisperPrompt.build(List(200) { "szó$it" }.joinToString(",")).length <= WhisperPrompt.MAX_CHARS)
     }
 }
+
+/** 1.1.5: havi összefoglaló tényblokkja és vázlata. */
+class MonthlyReportTest {
+    private val p = ProjectEntity(id = "p1", code = "PRJ-01", name = "Audit", ragStatus = "green")
+    private val month = java.time.YearMonth.of(2026, 10)
+    private val events = listOf(
+        ProjectEventEntity(projectId = "p1", date = "2026-10-05", type = "decision", title = "Külső auditor megbízása"),
+        ProjectEventEntity(projectId = "p1", date = "2026-09-20", type = "decision", title = "Szeptemberi döntés")
+    )
+    private val tasks = listOf(
+        GanttTaskEntity(projectId = "p1", title = "Kockázatelemzés", dueDate = "2026-10-20", assignee = "Kovács Anna"),
+        GanttTaskEntity(projectId = "p1", title = "Régi lejárt", dueDate = "2026-09-01"),
+        GanttTaskEntity(projectId = "p1", title = "Decemberi", dueDate = "2026-12-15")
+    )
+    private val meetings = listOf(
+        ReportBuilder.MeetingDigest("2026-10-03", "Nyitó megbeszélés", "Az audit ütemezése és a felelősök kijelölése."),
+        ReportBuilder.MeetingDigest("2026-10-14", "ISO 27001 audit", "A kockázatelemzést Kovács Anna készíti el.")
+    )
+    private val saved = listOf(ReportBuilder.SavedDigest("2026-10-14", "Vezetői", "**Lényeg:** az audit halad."))
+
+    @Test fun factBlockContainsOnlyThisMonth() {
+        val f = ReportBuilder.monthlyFactBlock(p, month, meetings, saved, events, tasks)
+        assertTrue(f.contains("Időszak: 2026-10"))
+        assertTrue(f.contains("Nyitó megbeszélés"))
+        assertTrue(f.contains("Vezetői"))
+        assertTrue(f.contains("Külső auditor megbízása"))
+        assertFalse(f.contains("Szeptemberi döntés"))
+        assertTrue(f.contains("Kockázatelemzés"))
+        assertTrue(f.contains("Régi lejárt"))      // korábbról áthúzódó, nyitott
+        assertFalse(f.contains("Decemberi"))
+    }
+
+    @Test fun factBlockRespectsBudget() {
+        val many = List(40) { ReportBuilder.MeetingDigest("2026-10-%02d".format(it % 28 + 1), "Megbeszélés $it", "szöveg ".repeat(400)) }
+        val f = ReportBuilder.monthlyFactBlock(p, month, many, saved, events, tasks, maxChars = 11_000)
+        assertTrue(f.length <= 11_000)
+        assertTrue(f.contains("Megbeszélés 39"))   // mindegyik megbeszélés szerepel, rövidítve
+    }
+
+    @Test fun templateListsMeetingsAndDecisions() {
+        val t = ReportBuilder.monthlyTemplate(p, month, meetings, events, tasks)
+        assertTrue(t.contains("havi összefoglaló: 2026-10"))
+        assertTrue(t.contains("2026-10-03 – Nyitó megbeszélés"))
+        assertTrue(t.contains("Külső auditor megbízása"))
+        assertFalse(t.contains("Szeptemberi döntés"))
+        assertTrue(t.contains("Offline vázlat"))
+    }
+
+    @Test fun monthlyPromptHasStructure() =
+        assertTrue(ReportBuilder.prompt(ReportBuilder.MONTHLY, "x").contains("Teendők a következő hónapra"))
+}

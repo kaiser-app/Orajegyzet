@@ -1,5 +1,16 @@
 # Változási Napló (Changelog) – AssiSten-s (korábban Fülelő Hangjegyzet)
 
+## 1.1.5 (versionCode 12) – Mentett AI-jelentések és havi összefoglaló
+
+- **Hiba volt:** a projektjelentések (Vezetői, Státusz, QA) és a jegyzetek típusos összefoglalói (Vezetői, Jegyzőkönyv, Teendők, Részletes) csak a képernyőn látszottak, bezáráskor elvesztek.
+- Új `ai_reports` tábla (adatbázis 5 → 6, adatvesztés nélküli migráció). Mentődik:
+  - minden elkészült projektjelentés (a Gemini-újrafogalmazás is, külön tételként);
+  - a jegyzetek AI-val (Gemini / Gemma) készült típusos összefoglalói – a jegyzethez és a projekthez is.
+- **Projekt Asszisztens → „Jelentések” fül:** a mentett jelentések időrendben, motorral; koppintásra megnyílik, törölhető.
+- **Jegyzet nézet → „Mentett összefoglalók”:** lenyitható lista, másolás, törlés.
+- **„📅 Havi összefoglaló”** gomb (az utolsó 6 hónapból választható): a hónap megbeszéléseiből (összefoglalóval), a hónapban mentett jelentésekből, döntéseiből, kockázataiból és feladataiból készül, majd a Jelentések fülre mentődik. Gemini → Gemma → offline vázlat útvonalon; Gemmán a 4000 tokenes kerethez arányosan rövidített tényblokkal.
+- A projekt törlésekor a hozzá tartozó mentett jelentések is törlődnek.
+
 ## 1.1.4 (versionCode 11) – Pontosabb Whisper-leirat, modell-áttekintés, letöltési linkek
 
 - **Szótár a Whispernek** (Beállítások → Feldolgozás → Leirat): nevek, szakszavak vesszővel; a felvétel témája automatikusan hozzáadódik. A Whisper ezek írásmódját követi (initial prompt).

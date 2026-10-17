@@ -466,6 +466,8 @@ fun NoteDetailScreen(noteId: Long, onBack: () -> Unit) {
 
     var alertMessage by remember { mutableStateOf<String?>(null) }
     var selectedCustomPrompt by remember { mutableStateOf<String?>(null) }
+    val savedSummaries by db.aiReportDao().byNote(noteId).collectAsState(initial = emptyList())
+    var expandedSavedId by remember { mutableStateOf<Long?>(null) }
     var customSummaryResult by remember { mutableStateOf<String?>(null) }
     var isGeneratingCustomSummary by remember { mutableStateOf(false) }
 
@@ -552,11 +554,13 @@ fun NoteDetailScreen(noteId: Long, onBack: () -> Unit) {
                 // 1) Gemini, ha a mód engedi ÉS most tényleg van hálózat; hibánál Gemma.
                 var label = type
                 var warning: String? = null
+                var engine: String = hu.orajegyzet.ai.SummaryEngine.EXTRACTIVE
                 val resultText: String = if (hu.orajegyzet.ai.ModeSelector.canUseGeminiNow(ctx, s)) {
                     try {
                         val r = GeminiPipeline(s.geminiApiKey, s.geminiModel)
                             .generateFreeText(promptInstruction, sourceText)
                         label = "$type · ☁ Gemini"
+                        engine = hu.orajegyzet.ai.SummaryEngine.GEMINI
                         r
                     } catch (e: Exception) {
                         val st = if (s.useGemma) offline.gemmaStyle(promptInstruction, sourceText)
@@ -565,12 +569,14 @@ fun NoteDetailScreen(noteId: Long, onBack: () -> Unit) {
                         warning = "A Gemini nem volt elérhető (${e.message}), offline készült." +
                             (st.warning?.let { " $it" } ?: "")
                         label = "$type · ${hu.orajegyzet.ai.SummaryEngine.label(st.engine)}"
+                        engine = st.engine
                         st.text
                     }
                 } else if (s.useGemma) {
                     val st = offline.gemmaStyle(promptInstruction, sourceText)
                     warning = st.warning
                     label = "$type · ${hu.orajegyzet.ai.SummaryEngine.label(st.engine)}"
+                    engine = st.engine
                     st.text
                 } else {
                     warning = "A Gemma ki van kapcsolva, és most nincs Gemini (hálózat/kulcs/mód) – kivonat készült."
@@ -579,9 +585,15 @@ fun NoteDetailScreen(noteId: Long, onBack: () -> Unit) {
                 }
 
                 selectedCustomPrompt = label
-                customSummaryResult = if (OfflinePipeline.echoesPrompt(resultText, promptInstruction))
+                val echoed = OfflinePipeline.echoesPrompt(resultText, promptInstruction)
+                customSummaryResult = if (echoed)
                     "Az összefoglaló nem sikerült, próbáld újra."
                 else resultText + (warning?.let { "\n\n_⚠️ ${it}_" } ?: "")
+                // 1.1.5: az AI-val (Gemini / Gemma) készült összefoglaló mentése a jegyzethez és a projekthez
+                if (!echoed && (engine == hu.orajegyzet.ai.SummaryEngine.GEMINI || engine == hu.orajegyzet.ai.SummaryEngine.GEMMA)) {
+                    hu.orajegyzet.ai.ReportArchive.save(ctx, type, "$type – ${n.subject} (${n.dateIso})", resultText,
+                        engine, warning, projectId = n.projectId, noteId = n.id)
+                }
             } catch (e: Exception) {
                 customSummaryResult = "Hiba: ${e.message}"
             } finally {
@@ -741,6 +753,44 @@ fun NoteDetailScreen(noteId: Long, onBack: () -> Unit) {
                             Text("Generált Összefoglaló (${selectedCustomPrompt ?: ""}):", fontWeight = FontWeight.Bold, fontSize = 14.sp)
                             Spacer(Modifier.height(4.dp))
                             MarkdownText(customSummaryResult!!)
+                        }
+                    }
+                }
+            }
+
+            // 1.1.5: a jegyzethez mentett AI-összefoglalók
+            if (savedSummaries.isNotEmpty() && !editing) {
+                item {
+                    Text("Mentett összefoglalók (${savedSummaries.size})", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                }
+                items(savedSummaries, key = { it.id }) { r ->
+                    Card(onClick = { expandedSavedId = if (expandedSavedId == r.id) null else r.id }) {
+                        Column(Modifier.fillMaxWidth().padding(12.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Column(Modifier.weight(1f)) {
+                                    Text(r.type, fontWeight = FontWeight.Medium, fontSize = 14.sp)
+                                    Text(
+                                        java.time.Instant.ofEpochMilli(r.createdAt).atZone(java.time.ZoneId.systemDefault())
+                                            .toLocalDateTime().toString().take(16).replace('T', ' ') +
+                                            (r.engine?.let { hu.orajegyzet.ai.SummaryEngine.label(it) }?.let { " · $it" } ?: ""),
+                                        fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                Text(if (expandedSavedId == r.id) "▲" else "▼")
+                            }
+                            if (expandedSavedId == r.id) {
+                                Spacer(Modifier.height(6.dp))
+                                MarkdownText(r.text)
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    TextButton(onClick = {
+                                        val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                        cm.setPrimaryClip(ClipData.newPlainText(r.type, r.text))
+                                    }) { Text("Másolás") }
+                                    TextButton(onClick = {
+                                        scope.launch(Dispatchers.IO) { db.aiReportDao().delete(r) }
+                                    }) { Text("Törlés", color = MaterialTheme.colorScheme.error) }
+                                }
+                            }
                         }
                     }
                 }

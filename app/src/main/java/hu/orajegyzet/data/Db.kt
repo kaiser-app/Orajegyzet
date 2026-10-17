@@ -144,6 +144,9 @@ interface NoteDao {
     @Query("SELECT * FROM notes WHERE projectId = :projectId ORDER BY dateIso DESC")
     fun byProject(projectId: String): Flow<List<Note>>
 
+    @Query("SELECT * FROM notes WHERE projectId = :projectId AND status = 'DONE' AND dateIso >= :from AND dateIso <= :to ORDER BY dateIso, startMin")
+    suspend fun doneInProjectBetween(projectId: String, from: String, to: String): List<Note>
+
     @Query("SELECT * FROM notes WHERE status = 'RECORDING' LIMIT 1")
     suspend fun activeRecording(): Note?
 
@@ -230,15 +233,56 @@ interface GanttTaskDao {
     @Delete suspend fun delete(t: GanttTaskEntity)
 }
 
+/**
+ * Mentett AI-szövegek (1.1.5): projektjelentések (Vezetői, Státusz, QA, Havi) és a jegyzetek
+ * típusos összefoglalói (Vezetői, Jegyzőkönyv, Teendők, Részletes). Ezekből készül a havi összefoglaló is.
+ */
+@Entity(tableName = "ai_reports")
+data class AiReport(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val projectId: String? = null,
+    val noteId: Long? = null,
+    val type: String,
+    val title: String,
+    val text: String,
+    val engine: String? = null,
+    val warning: String? = null,
+    val createdAt: Long = System.currentTimeMillis(),
+    /** Havi összefoglalónál az időszak, pl. „2026-10”. */
+    val period: String? = null
+)
+
+@Dao
+interface AiReportDao {
+    @Query("SELECT * FROM ai_reports WHERE projectId = :projectId ORDER BY createdAt DESC")
+    fun byProject(projectId: String): Flow<List<AiReport>>
+
+    @Query("SELECT * FROM ai_reports WHERE noteId = :noteId ORDER BY createdAt DESC")
+    fun byNote(noteId: Long): Flow<List<AiReport>>
+
+    @Query("SELECT * FROM ai_reports WHERE projectId = :projectId AND createdAt >= :fromMs AND createdAt < :toMs ORDER BY createdAt")
+    suspend fun byProjectBetween(projectId: String, fromMs: Long, toMs: Long): List<AiReport>
+
+    @Query("DELETE FROM ai_reports WHERE projectId = :projectId")
+    suspend fun deleteByProject(projectId: String)
+
+    @Query("DELETE FROM ai_reports")
+    suspend fun deleteAll()
+
+    @Insert suspend fun insert(r: AiReport): Long
+    @Delete suspend fun delete(r: AiReport)
+}
+
 @Database(
     entities = [
         Lesson::class,
         Note::class,
         ProjectEntity::class,
         ProjectEventEntity::class,
-        GanttTaskEntity::class
+        GanttTaskEntity::class,
+        AiReport::class
     ],
-    version = 5,
+    version = 6,
     exportSchema = true
 )
 @TypeConverters(Converters::class)
@@ -248,6 +292,7 @@ abstract class Db : RoomDatabase() {
     abstract fun projectDao(): ProjectDao
     abstract fun projectEventDao(): ProjectEventDao
     abstract fun ganttTaskDao(): GanttTaskDao
+    abstract fun aiReportDao(): AiReportDao
 
     companion object {
         val MIGRATION_3_4 = object : Migration(3, 4) {
@@ -263,16 +308,28 @@ abstract class Db : RoomDatabase() {
             }
         }
 
+        val MIGRATION_5_6 = object : Migration(5, 6) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `ai_reports` (" +
+                        "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `projectId` TEXT, `noteId` INTEGER, " +
+                        "`type` TEXT NOT NULL, `title` TEXT NOT NULL, `text` TEXT NOT NULL, `engine` TEXT, " +
+                        "`warning` TEXT, `createdAt` INTEGER NOT NULL, `period` TEXT)"
+                )
+            }
+        }
+
         @Volatile private var inst: Db? = null
         fun get(ctx: Context): Db = inst ?: synchronized(this) {
             inst ?: Room.databaseBuilder(ctx.applicationContext, Db::class.java, "orajegyzet.db")
-                .addMigrations(MIGRATION_3_4, MIGRATION_4_5)
+                .addMigrations(MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
                 .build().also { inst = it }
         }
 
         suspend fun resetAllData(ctx: Context) {
             val db = get(ctx)
             db.noteDao().deleteAll()
+            db.aiReportDao().deleteAll()
             db.projectEventDao().deleteAll()
             db.ganttTaskDao().deleteAll()
             db.projectDao().deleteAll()
