@@ -268,3 +268,53 @@ class EngineRoutingTest {
     @Test fun describeMentionsLock() =
         assertTrue(EngineRouting.describe(true, true, true, true).contains("adatvédelmi zár"))
 }
+
+/** 1.1.4: modellazonosítás, letöltési linkek, Whisper-szótár. */
+class ModelInfoTest {
+    private fun header(vocab: Int, audioState: Int, textLayer: Int, mels: Int, ftype: Int): ByteArray {
+        val b = java.nio.ByteBuffer.allocate(ModelInfo.WHISPER_HEADER_BYTES).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+        b.putInt(0x67676d6c)
+        listOf(vocab, 1500, audioState, 20, 32, 448, audioState, 20, textLayer, mels, ftype).forEach { b.putInt(it) }
+        return b.array()
+    }
+
+    @Test fun detectsLargeV3TurboQ5() {
+        val w = ModelInfo.parseWhisperHeader(header(51866, 1280, 4, 128, 1008))!!
+        assertEquals("large-v3-turbo", w.size)
+        assertEquals("q5_0", w.quant)
+        assertFalse(w.englishOnly)
+    }
+
+    @Test fun detectsLargeV3AndQ8() {
+        val w = ModelInfo.parseWhisperHeader(header(51866, 1280, 32, 128, 7))!!
+        assertEquals("large-v3", w.size)
+        assertEquals("q8_0", w.quant)
+    }
+
+    @Test fun flagsEnglishOnlyModel() =
+        assertTrue(ModelInfo.parseWhisperHeader(header(51864, 512, 6, 80, 1))!!.englishOnly)
+
+    @Test fun rejectsNonGgml() =
+        assertNull(ModelInfo.parseWhisperHeader(ByteArray(ModelInfo.WHISPER_HEADER_BYTES)))
+
+    @Test fun gemmaVariantFromNameOrSize() {
+        assertEquals("Gemma 4 E4B", ModelInfo.gemmaVariant("gemma-4-E4B-it.litertlm", 0))
+        assertEquals("Gemma 4 E2B", ModelInfo.gemmaVariant("gemma-4-E2B-it.litertlm", 0))
+        assertTrue(ModelInfo.gemmaVariant("Gemma (.litertlm)", 3_660_000_000L).startsWith("Gemma 4 E4B"))
+        assertTrue(ModelInfo.gemmaVariant("", 2_588_147_712L).startsWith("Gemma 4 E2B"))
+    }
+
+    @Test fun downloadsAreDirectHttpsLinks() {
+        assertEquals(4, ModelInfo.DOWNLOADS.size)
+        assertTrue(ModelInfo.DOWNLOADS.all { it.url.startsWith("https://huggingface.co/") && "/resolve/main/" in it.url })
+        assertTrue(ModelInfo.DOWNLOADS.any { it.url.contains("gemma-4-E4B-it.litertlm") })
+        assertTrue(ModelInfo.DOWNLOADS.any { it.url.contains("ggml-large-v3-turbo-q5_0.bin") })
+    }
+
+    @Test fun whisperPromptBuildsAndCaps() {
+        assertEquals("", WhisperPrompt.build(""))
+        val p = WhisperPrompt.build("Kovács Anna, ISO 27001; Kovács Anna\nkockázatelemzés", "IT audit")
+        assertEquals("Magyar nyelvű megbeszélés. Téma: IT audit. Nevek és szakszavak: Kovács Anna, ISO 27001, kockázatelemzés.", p)
+        assertTrue(WhisperPrompt.build(List(200) { "szó$it" }.joinToString(",")).length <= WhisperPrompt.MAX_CHARS)
+    }
+}

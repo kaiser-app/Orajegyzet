@@ -411,13 +411,26 @@ Java_com_redravencomputing_whispercore_WhisperJNIBridge_freeContext(
 
 JNIEXPORT void JNICALL
 Java_com_redravencomputing_whispercore_WhisperJNIBridge_fullTranscribe(
-        JNIEnv *env, jobject thiz, jlong context_ptr, jint num_threads, jfloatArray audio_data) {
+        JNIEnv *env, jobject thiz, jlong context_ptr, jint num_threads, jfloatArray audio_data,
+        jstring initial_prompt, jint beam_size) {
     UNUSED(thiz);
     struct whisper_context *context = (struct whisper_context *) context_ptr;
     jfloat *audio_data_arr = (*env)->GetFloatArrayElements(env, audio_data, NULL);
     const jsize audio_data_length = (*env)->GetArrayLength(env, audio_data);
 
-    struct whisper_full_params params = whisper_full_default_params(WHISPER_SAMPLING_GREEDY);
+    // AssiSten-s 1.1.4: pontosabb mód (beam search) és szótár (initial prompt)
+    struct whisper_full_params params = whisper_full_default_params(
+            beam_size > 1 ? WHISPER_SAMPLING_BEAM_SEARCH : WHISPER_SAMPLING_GREEDY);
+    if (beam_size > 1) {
+        params.beam_search.beam_size = beam_size;
+    }
+    const char *prompt_chars = NULL;
+    if (initial_prompt != NULL) {
+        prompt_chars = (*env)->GetStringUTFChars(env, initial_prompt, NULL);
+        if (prompt_chars != NULL && prompt_chars[0] != '\0') {
+            params.initial_prompt = prompt_chars;
+        }
+    }
     params.print_realtime = false;
     params.print_progress = false;
     params.print_timestamps = true;
@@ -436,11 +449,17 @@ Java_com_redravencomputing_whispercore_WhisperJNIBridge_fullTranscribe(
         if (audio_data_arr != NULL) {
             (*env)->ReleaseFloatArrayElements(env, audio_data, audio_data_arr, JNI_ABORT);
         }
+        if (prompt_chars != NULL) {
+            (*env)->ReleaseStringUTFChars(env, initial_prompt, prompt_chars);
+        }
         return;
     }
 
     if (audio_data_arr == NULL) {
         LOGE("WhisperJNI: GetFloatArrayElements failed to get audio data. Aborting.");
+        if (prompt_chars != NULL) {
+            (*env)->ReleaseStringUTFChars(env, initial_prompt, prompt_chars);
+        }
         return;
     }
 
@@ -490,6 +509,9 @@ Java_com_redravencomputing_whispercore_WhisperJNIBridge_fullTranscribe(
 
     // Release the Java array elements
     (*env)->ReleaseFloatArrayElements(env, audio_data, audio_data_arr, JNI_ABORT);
+    if (prompt_chars != NULL) {
+        (*env)->ReleaseStringUTFChars(env, initial_prompt, prompt_chars);
+    }
 }
 
 

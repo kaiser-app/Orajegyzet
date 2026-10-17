@@ -21,8 +21,8 @@ internal class WhisperJNIWrapper(private val realJni: WhisperJNIBridge) : IWhisp
     override fun getSystemInfo(): String =
         realJni.getSystemInfo()
 
-    override fun fullTranscribe(ptr: Long, numThreads: Int, data: FloatArray): Unit =
-        realJni.fullTranscribe(ptr, numThreads, data)
+    override fun fullTranscribe(ptr: Long, numThreads: Int, data: FloatArray, initialPrompt: String?, beamSize: Int): Unit =
+        realJni.fullTranscribe(ptr, numThreads, data, initialPrompt, beamSize)
 
     override fun getTextSegmentCount(ptr: Long): Int =
         realJni.getTextSegmentCount(ptr)
@@ -97,7 +97,7 @@ internal object WhisperJNIBridge {
     external fun freeContext(contextPtr: Long)
     external fun initContextFromAsset(assetManager: AssetManager, assetPath: String): Long
     external fun initContext(modelPath: String): Long // For file path loading
-    external fun fullTranscribe(contextPtr: Long, numThreads: Int, audioData: FloatArray)
+    external fun fullTranscribe(contextPtr: Long, numThreads: Int, audioData: FloatArray, initialPrompt: String?, beamSize: Int)
     external fun getTextSegmentCount(contextPtr: Long): Int
     external fun getTextSegment(contextPtr: Long, index: Int): String
     external fun getTextSegmentT0(contextPtr: Long, index: Int): Long

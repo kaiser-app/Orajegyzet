@@ -7,6 +7,7 @@ import android.media.MediaFormat
 import android.util.Log
 import com.redravencomputing.whispercore.Whisper
 import com.redravencomputing.whispercore.WhisperCpuConfig
+import com.redravencomputing.whispercore.WhisperDecodeConfig
 import com.redravencomputing.whispercore.WhisperDelegate
 import com.redravencomputing.whispercore.WhisperOperationError
 import kotlinx.coroutines.CoroutineScope
@@ -46,7 +47,11 @@ class OfflinePipeline(
     private val chunkSec: Int = 27,
     private val overlapSec: Int = 3,
     /** Valódi feldolgozási lépések kiírása (pl. „Leirat: 3/12 darab (Whisper)"). */
-    private val onProgress: (suspend (String) -> Unit)? = null
+    private val onProgress: (suspend (String) -> Unit)? = null,
+    /** 1.1.4: a Whisper „szótára” (WhisperPrompt.build), üres = nincs. */
+    private val whisperPrompt: String = "",
+    /** 1.1.4: pontosabb átírás (beam search, 5 változat). */
+    private val whisperAccurate: Boolean = false
 ) : NotePipeline {
 
     override suspend fun process(audioPath: String, subject: String, dateLabel: String, isLesson: Boolean): NoteResult {
@@ -313,6 +318,9 @@ class OfflinePipeline(
     private suspend fun transcribeWhisper(wav: File, modelPath: String): String {
         WhisperCpuConfig.override = whisperThreads.coerceIn(2, 8)
         return warmMutex.withLock {
+            // a dekódolási beállítások a zár alatt kerülnek be, hogy párhuzamos futás ne keverje őket
+            WhisperDecodeConfig.initialPrompt = whisperPrompt.ifBlank { null }
+            WhisperDecodeConfig.beamSize = if (whisperAccurate) 5 else 1
             val whisper = acquireWhisper(modelPath)
             try {
                 withTimeout(6 * 60_000L) {

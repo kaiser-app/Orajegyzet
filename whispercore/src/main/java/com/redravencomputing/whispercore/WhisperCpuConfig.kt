@@ -4,6 +4,16 @@ import android.util.Log
 import java.io.BufferedReader
 import java.io.FileReader
 
+/**
+ * Dekódolási beállítások (AssiSten-s 1.1.4), az app állítja be átírás előtt.
+ *  - initialPrompt: „szótár” – nevek, szakszavak, a téma; a Whisper ezek írásmódját követi;
+ *  - beamSize: 1 = gyors (greedy), 5 = pontosabb (beam search, kb. 1,5–2× lassabb).
+ */
+object WhisperDecodeConfig {
+    @Volatile var initialPrompt: String? = null
+    @Volatile var beamSize: Int = 1
+}
+
 object WhisperCpuConfig {
     /** Az app felülírhatja (Beállítások → Teljesítmény). Ha null, az automatikus érték. */
     var override: Int? = null

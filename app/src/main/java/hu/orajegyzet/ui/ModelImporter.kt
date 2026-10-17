@@ -26,7 +26,10 @@ object ModelImporter {
         val gemmaFileName: String? = null,
         val gemmaSizeBytes: Long = 0,
         /** Van modellfájl, de a LiteRT-LM nem tudja futtatni (pl. régi MediaPipe .task vagy sérült fájl). */
-        val gemmaInvalidSizeBytes: Long = 0
+        val gemmaInvalidSizeBytes: Long = 0,
+        val whisperSizeBytes: Long = 0,
+        /** A Whisper-fájl fejlécéből kiolvasott típus (pl. „large-v3-turbo · q5_0”). */
+        val whisperInfo: hu.orajegyzet.ai.ModelInfo.Whisper? = null
     )
 
     data class GemmaTestResult(val answer: String, val loadSeconds: Double, val answerSeconds: Double, val backend: String)
@@ -37,9 +40,12 @@ object ModelImporter {
 
     fun status(ctx: Context): Status {
         val gemma = GemmaModel.file(ctx)
+        val whisper = File(modelsDir(ctx), "whisper.bin").takeIf { it.isFile && it.length() > 0 }
         return Status(
             gemmaInstalled = gemma != null,
-            whisperInstalled = File(modelsDir(ctx), "whisper.bin").let { it.isFile && it.length() > 0 },
+            whisperInstalled = whisper != null,
+            whisperSizeBytes = whisper?.length() ?: 0,
+            whisperInfo = whisper?.let { readWhisperInfo(it) },
             gemmaFileName = gemma?.name,
             gemmaSizeBytes = gemma?.length() ?: 0,
             gemmaInvalidSizeBytes = if (gemma == null) GemmaModel.invalidFile(ctx)?.length() ?: 0 else 0
@@ -71,7 +77,25 @@ object ModelImporter {
         }
     }
 
+    private fun readWhisperInfo(f: File): hu.orajegyzet.ai.ModelInfo.Whisper? = runCatching {
+        val buf = ByteArray(hu.orajegyzet.ai.ModelInfo.WHISPER_HEADER_BYTES)
+        val n = f.inputStream().use { it.read(buf) }
+        if (n < buf.size) null else hu.orajegyzet.ai.ModelInfo.parseWhisperHeader(buf)
+    }.getOrNull()
+
     fun importWhisper(ctx: Context, uri: Uri) {
+        var originalName = "whisper.bin"
+        ctx.contentResolver.query(uri, null, null, null, null)?.use {
+            if (it.moveToFirst()) {
+                val idx = it.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                if (idx >= 0) it.getString(idx)?.let { n -> originalName = n }
+            }
+        }
+        val head = ByteArray(hu.orajegyzet.ai.ModelInfo.WHISPER_HEADER_BYTES)
+        val got = ctx.contentResolver.openInputStream(uri)?.use { it.read(head) } ?: -1
+        check(got == head.size && hu.orajegyzet.ai.ModelInfo.parseWhisperHeader(head) != null) {
+            "Ez nem Whisper ggml modell (.bin). A whisper.cpp oldaláról töltsd le, pl. ggml-large-v3-turbo-q5_0.bin."
+        }
         val target = File(modelsDir(ctx), "whisper.bin")
         val tmp = File(modelsDir(ctx), "whisper.bin.part")
         ctx.contentResolver.openInputStream(uri).use { input ->
@@ -80,6 +104,7 @@ object ModelImporter {
         }
         check(tmp.length() > 10_000_000) { tmp.delete(); "A fájl gyanúsan kicsi — biztosan Whisper .bin modell?" }
         target.delete(); check(tmp.renameTo(target)) { "Nem sikerült véglegesíteni" }
+        runBlocking { Settings.setWhisperModelName(ctx, originalName) }
     }
 
     /**

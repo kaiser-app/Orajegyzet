@@ -15,6 +15,7 @@ import hu.orajegyzet.ai.GeminiPipeline
 import hu.orajegyzet.ai.ModeSelector
 import hu.orajegyzet.ai.OfflinePipeline
 import hu.orajegyzet.ai.SummaryEngine
+import hu.orajegyzet.ai.WhisperPrompt
 import android.util.Log
 import hu.orajegyzet.data.Db
 import hu.orajegyzet.data.NoteStatus
@@ -103,6 +104,10 @@ class ProcessingWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker
         dao.update(note.copy(status = NoteStatus.PROCESSING,
             progress = if (online) "Leirat és elemzés: Gemini (${settings.geminiModel})" else "Leirat előkészítése (Whisper)…"))
 
+        // 1.1.4: Whisper-szótár (téma + nevek, szakszavak) és pontosabb mód
+        val whisperPrompt = WhisperPrompt.build(settings.whisperGlossary, note.subject)
+        val transcribeTimeout = (if (settings.whisperAccurate) 60 else 30) * 60_000L
+
         return try {
             val r = if (online && audio != null && audio.exists()) {
                 val res = GeminiPipeline(settings.geminiApiKey, settings.geminiModel)
@@ -116,7 +121,8 @@ class ProcessingWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker
                         val offline = OfflinePipeline(
                             applicationContext, false, settings.whisperThreads,
                             settings.keepModelWarm, settings.warmMinutes, settings.summaryBlockChars,
-                            settings.whisperChunkSec, settings.whisperOverlapSec, step
+                            settings.whisperChunkSec, settings.whisperOverlapSec, step,
+                            whisperPrompt = whisperPrompt, whisperAccurate = settings.whisperAccurate
                         )
                         validTranscript = offline.transcribeOnly(audio.absolutePath)
                     }
@@ -127,9 +133,10 @@ class ProcessingWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker
                 val pipeline = OfflinePipeline(
                     applicationContext, settings.useGemma, settings.whisperThreads,
                     settings.keepModelWarm, settings.warmMinutes, settings.summaryBlockChars,
-                    settings.whisperChunkSec, settings.whisperOverlapSec, step)
+                    settings.whisperChunkSec, settings.whisperOverlapSec, step,
+                    whisperPrompt = whisperPrompt, whisperAccurate = settings.whisperAccurate)
                 if (settings.stagedDisplay) {
-                    val transcript = withTimeout(30 * 60_000L) {
+                    val transcript = withTimeout(transcribeTimeout) {
                         pipeline.transcribeOnly(audio.absolutePath) { partial ->
                             dao.update(note.copy(status = NoteStatus.PROCESSING, transcript = partial,
                                 processedOnline = false, summary = "(leirat készül…)", error = "",
@@ -143,7 +150,7 @@ class ProcessingWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker
                         pipeline.finishSummary(transcript, note.subject, dateLabel, note.lessonId != null)
                     }
                 } else {
-                    withTimeout(30 * 60_000L) {
+                    withTimeout(transcribeTimeout + 12 * 60_000L) {
                         pipeline.process(audio.absolutePath, note.subject, dateLabel, note.lessonId != null)
                     }
                 }

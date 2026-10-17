@@ -309,6 +309,24 @@ fun SettingsScreen(onBack: () -> Unit) {
                         Spacer(Modifier.width(8.dp))
                         Text("Adatvédelmi zár — a hang és a szöveg soha nem hagyja el a készüléket (kérésre sem fut Gemini)")
                     }
+                    HorizontalDivider(Modifier.padding(vertical = 4.dp))
+                    Text("Leirat (Whisper, helyben)", fontWeight = FontWeight.Medium)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Switch(checked = s.whisperAccurate, onCheckedChange = { s = s.copy(whisperAccurate = it) })
+                        Spacer(Modifier.width(8.dp))
+                        Text("Pontosabb átírás (5 változatot mérlegel; kb. 1,5–2× lassabb)")
+                    }
+                    OutlinedTextField(
+                        value = s.whisperGlossary,
+                        onValueChange = { s = s.copy(whisperGlossary = it) },
+                        label = { Text("Szótár: nevek, szakszavak (vesszővel)") },
+                        placeholder = { Text("pl. Kovács Anna, ISO 27001, kockázatelemzés") },
+                        modifier = Modifier.fillMaxWidth(),
+                        minLines = 2
+                    )
+                    Text("A felvétel témája automatikusan hozzáadódik. A Whisper ezeknek a szavaknak az írásmódját " +
+                        "követi; a túl hosszú lista (${hu.orajegyzet.ai.WhisperPrompt.MAX_CHARS} karakter fölött) levágódik.",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
                     // 1.1.3: egyértelmű kijelzés, mi fog ténylegesen futni a mostani beállításokkal
                     val effective = hu.orajegyzet.ai.EngineRouting.describe(
                         preferGemini = s.preferGemini,
@@ -466,17 +484,36 @@ fun SettingsScreen(onBack: () -> Unit) {
             }
             item {
                 SettingSection("Modellek", expModels, { expModels = !expModels }) {
-                    Text(
-                        "Whisper (magyar beszédfelismerés): " +
-                            (if (modelStatus.whisperInstalled) "telepítve ✓" else "nincs telepítve") +
-                            "\nGemma (összefoglaló): " +
-                            (if (modelStatus.gemmaInstalled)
-                                "telepítve ✓ – ${s.gemmaModelName.ifBlank { modelStatus.gemmaFileName ?: "" }}, " +
-                                    "%.0f MB".format(modelStatus.gemmaSizeBytes / 1_000_000.0)
-                            else if (modelStatus.gemmaInvalidSizeBytes > 0) "HIBÁS FÁJL (nem futtatható)"
-                            else "nincs telepítve"),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                    // 1.1.4: a betöltött modellek pontos azonosítása
+                    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) {
+                        Column(Modifier.fillMaxWidth().padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text("Betöltött modellek", fontWeight = FontWeight.Medium,
+                                color = MaterialTheme.colorScheme.onSecondaryContainer)
+                            Text(
+                                "🎙 Leirat: " + if (modelStatus.whisperInstalled)
+                                    "Whisper ${modelStatus.whisperInfo?.label ?: "(ismeretlen típus)"} – " +
+                                        hu.orajegyzet.ai.ModelInfo.mb(modelStatus.whisperSizeBytes) +
+                                        (s.whisperModelName.takeIf { it.isNotBlank() }?.let { "\n     $it" } ?: "")
+                                else "nincs telepítve",
+                                fontSize = 13.sp, color = MaterialTheme.colorScheme.onSecondaryContainer
+                            )
+                            Text(
+                                "🧠 Elemzés: " + when {
+                                    modelStatus.gemmaInstalled ->
+                                        hu.orajegyzet.ai.ModelInfo.gemmaVariant(s.gemmaModelName, modelStatus.gemmaSizeBytes) +
+                                            " – " + hu.orajegyzet.ai.ModelInfo.mb(modelStatus.gemmaSizeBytes) +
+                                            (s.gemmaModelName.takeIf { it.isNotBlank() }?.let { "\n     $it" } ?: "")
+                                    modelStatus.gemmaInvalidSizeBytes > 0 -> "HIBÁS FÁJL (nem futtatható)"
+                                    else -> "nincs telepítve"
+                                },
+                                fontSize = 13.sp, color = MaterialTheme.colorScheme.onSecondaryContainer
+                            )
+                        }
+                    }
+                    if (modelStatus.whisperInfo?.englishOnly == true) {
+                        Text("❌ A telepített Whisper csak angol nyelvű (.en) modell – magyarul nem működik. " +
+                            "Tölts le egy többnyelvűt (lent).", fontSize = 13.sp, color = MaterialTheme.colorScheme.error)
+                    }
                     if (modelStatus.gemmaInvalidSizeBytes > 0) {
                         Text("❌ A telepített Gemma-fájl (%.0f MB) nem LiteRT-LM (.litertlm) modell – valószínűleg egy régi MediaPipe .task, vagy sérült/félbeszakadt letöltés. Töröld, és importáld a gemma-4-E2B-it.litertlm fájlt."
                             .format(modelStatus.gemmaInvalidSizeBytes / 1_000_000.0),
@@ -524,9 +561,20 @@ fun SettingsScreen(onBack: () -> Unit) {
                         modifier = Modifier.fillMaxWidth(), enabled = importing == null) {
                         Text("Gemma modell (.litertlm) importálása")
                     }
-                    Text("Magyarra a Whisper large-v3-turbo q5_0 modellt ajánljuk (README-link). " +
-                        "Gemma: a Hugging Face litert-community oldaláról a gemma-4-E2B-it.litertlm (2,59 GB) ajánlott; " +
-                        "kisebb telefonra a gemma3-1b-it-int4.litertlm. Előbb töltsd le a telefonra, és a Letöltések mappából válaszd ki.",
+                    Text("Letöltés (a telefon böngészője a Letöltések mappába menti, utána a fenti gombbal importáld):",
+                        fontWeight = FontWeight.Medium, fontSize = 13.sp)
+                    hu.orajegyzet.ai.ModelInfo.DOWNLOADS.forEach { d ->
+                        OutlinedButton(onClick = {
+                            runCatching {
+                                ctx.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW,
+                                    android.net.Uri.parse(d.url)).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
+                            }.onFailure { modelError = "Nem nyílt meg a böngésző: ${it.message}" }
+                        }, modifier = Modifier.fillMaxWidth()) {
+                            Text("⬇ ${d.title} (${d.note})", fontSize = 13.sp)
+                        }
+                    }
+                    Text("Importáláskor kb. kétszer annyi szabad hely kell, mint a fájl mérete; az import után a " +
+                        "Letöltések mappából törölhető. A Gemma letöltésénél a Hugging Face kérheti a licenc elfogadását.",
                         color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
                 }
             }

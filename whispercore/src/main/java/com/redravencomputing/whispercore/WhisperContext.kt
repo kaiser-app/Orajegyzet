@@ -13,7 +13,7 @@ internal interface IWhisperJNI {
 	fun initContextFromInputStream(stream: InputStream): Long
 	fun freeContext(ptr: Long)
 	fun getSystemInfo(): String
-	fun fullTranscribe(ptr: Long, numThreads: Int, data: FloatArray)
+	fun fullTranscribe(ptr: Long, numThreads: Int, data: FloatArray, initialPrompt: String?, beamSize: Int)
 	fun getTextSegmentCount(ptr: Long): Int
 	fun getTextSegment(ptr: Long, index: Int): String
 	fun getTextSegmentT0(ptr: Long, index: Int): Long
@@ -38,7 +38,8 @@ internal class WhisperContext private constructor(
 		withContext(scope.coroutineContext) {
 		require(ptr != 0L) { "Context has been released or was not initialized." }
 		// Use the injected 'jni' instance
-		jni.fullTranscribe(ptr, numThreadsForTranscription, data) // << CHANGE HERE
+		jni.fullTranscribe(ptr, numThreadsForTranscription, data,
+			WhisperDecodeConfig.initialPrompt, WhisperDecodeConfig.beamSize.coerceIn(1, 8))
 		val textCount = jni.getTextSegmentCount(ptr)              // << CHANGE HERE
 		buildString {
 			for (i in 0 until textCount) {

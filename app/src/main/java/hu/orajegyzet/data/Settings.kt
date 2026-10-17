@@ -93,7 +93,10 @@ data class AppSettings(
     val secretsLost: Boolean = false,
     val gemmaModelName: String = "",
     val schoolMode: Boolean = false,        // iskolai mód: órarend, csengetés, widget (1.0.4)
-    val preferGemini: Boolean = false       // alap elemző: false = Gemma 4 helyben, true = Gemini (1.1)
+    val preferGemini: Boolean = false,      // alap elemző: false = Gemma 4 helyben, true = Gemini (1.1)
+    val whisperGlossary: String = "",       // szótár: nevek, szakszavak a Whispernek (1.1.4)
+    val whisperAccurate: Boolean = false,   // pontosabb átírás: beam search (1.1.4)
+    val whisperModelName: String = ""       // az importált Whisper-fájl eredeti neve (1.1.4)
 )
 
 private val Context.ds by preferencesDataStore("settings")
@@ -123,6 +126,9 @@ object Settings {
     private val SCHOOL_MODE = booleanPreferencesKey("school_mode")
     private val PREFER_GEMINI = booleanPreferencesKey("prefer_gemini")
     private val PROC_V113 = booleanPreferencesKey("processing_settings_v113")
+    private val WHISPER_GLOSSARY = stringPreferencesKey("whisper_glossary")
+    private val WHISPER_ACCURATE = booleanPreferencesKey("whisper_accurate")
+    private val WHISPER_MODEL_NAME = stringPreferencesKey("whisper_model_name")
 
     suspend fun migrateSecretsIfNeeded(ctx: Context) {
         try {
@@ -174,7 +180,10 @@ object Settings {
             secretsLost = SecretCipher.secretsLost,
             gemmaModelName = p[GEMMA_MODEL_NAME] ?: "",
             schoolMode = p[SCHOOL_MODE] ?: false,
-            preferGemini = p[PREFER_GEMINI] ?: false
+            preferGemini = p[PREFER_GEMINI] ?: false,
+            whisperGlossary = p[WHISPER_GLOSSARY] ?: "",
+            whisperAccurate = p[WHISPER_ACCURATE] ?: false,
+            whisperModelName = p[WHISPER_MODEL_NAME] ?: ""
         )
     }
 
@@ -183,6 +192,11 @@ object Settings {
     /** Csak a Gemma-modell eredeti nevét írja (a titkos mezőkhöz nem nyúl). */
     suspend fun setGemmaModelName(ctx: Context, name: String) {
         ctx.ds.edit { p -> p[GEMMA_MODEL_NAME] = name }
+    }
+
+    /** Csak a Whisper-modell eredeti nevét írja (importkor). */
+    suspend fun setWhisperModelName(ctx: Context, name: String) {
+        ctx.ds.edit { p -> p[WHISPER_MODEL_NAME] = name }
     }
 
     /**
@@ -237,6 +251,8 @@ object Settings {
             p[GEMMA_MODEL_NAME] = s.gemmaModelName
             p[SCHOOL_MODE] = s.schoolMode
             p[PREFER_GEMINI] = s.preferGemini
+            p[WHISPER_GLOSSARY] = s.whisperGlossary
+            p[WHISPER_ACCURATE] = s.whisperAccurate
         }
         if (secretError == null) SecretCipher.secretsLost = false
         secretError?.let { throw it }

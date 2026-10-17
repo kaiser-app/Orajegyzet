@@ -1,5 +1,16 @@
 # Változási Napló (Changelog) – AssiSten-s (korábban Fülelő Hangjegyzet)
 
+## 1.1.4 (versionCode 11) – Pontosabb Whisper-leirat, modell-áttekintés, letöltési linkek
+
+- **Szótár a Whispernek** (Beállítások → Feldolgozás → Leirat): nevek, szakszavak vesszővel; a felvétel témája automatikusan hozzáadódik. A Whisper ezek írásmódját követi (initial prompt).
+- **Pontosabb átírás** kapcsoló: beam search (5 változat) a gyors, mohó dekódolás helyett; kb. 1,5–2× lassabb. Bekapcsolva a leirat időkorlátja 30 helyett 60 perc.
+- A whisper.cpp JNI-hívása megkapja a szótárt és a beam-méretet (`WhisperDecodeConfig`).
+- **Betöltött modellek** kártya (Beállítások → Modellek):
+  - Whisper: a fájl fejlécéből felismert típus (pl. „large-v3-turbo · q5_0”), méret, eredeti fájlnév; figyelmeztet, ha csak angol (.en) modell van fent;
+  - Gemma: változat (E2B / E4B), méret, eredeti fájlnév.
+- A Whisper-import ellenőrzi, hogy valódi ggml-modellt választottál-e, és megjegyzi az eredeti nevet.
+- **Közvetlen letöltési gombok**: Whisper large-v3-turbo q5_0 / q8_0, Gemma 4 E2B / E4B.
+
 ## 1.1.3 (versionCode 10) – Egyszerűbb Feldolgozás-beállítások
 
 - **A „Mód” sor (Offline / Online / Automatikus) megszűnt.** A működés mindig automatikus, a motort az **Alap elemző** dönti el:
