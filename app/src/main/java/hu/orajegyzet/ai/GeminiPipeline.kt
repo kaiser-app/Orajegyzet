@@ -182,6 +182,41 @@ class GeminiPipeline(
         throw lastError ?: RuntimeException("A Gemini modellek egyike sem érhető el (404).")
     }
 
+    /**
+     * A kulccsal elérhető modellek lekérése (ListModels, lapozással), szűrve a jegyzetkészítésre
+     * alkalmasakra (1.1.6). Hibánál érthető üzenettel dob.
+     */
+    fun listModels(): List<String> {
+        validateApiKey()
+        val entries = mutableListOf<GeminiModels.Entry>()
+        var pageToken: String? = null
+        var guard = 0
+        do {
+            val url = "$baseUrl/v1beta/models?pageSize=1000" + (pageToken?.let { "&pageToken=$it" } ?: "")
+            val req = Request.Builder().url(url).get().build()
+            val body = http.newCall(req).execute().use { r ->
+                val t = r.body?.string() ?: ""
+                if (!r.isSuccessful) throw errorForHttpCode(r.code, t, "Modellista")
+                t
+            }
+            val json = JSONObject(body)
+            val arr = json.optJSONArray("models") ?: JSONArray()
+            for (i in 0 until arr.length()) {
+                val m = arr.getJSONObject(i)
+                val methods = m.optJSONArray("supportedGenerationMethods")?.let { a ->
+                    (0 until a.length()).map { a.getString(it) }
+                } ?: emptyList()
+                entries += GeminiModels.Entry(
+                    id = m.optString("name").removePrefix("models/"),
+                    displayName = m.optString("displayName"),
+                    methods = methods
+                )
+            }
+            pageToken = json.optString("nextPageToken").takeIf { it.isNotBlank() }
+        } while (pageToken != null && ++guard < 10)
+        return GeminiModels.usable(entries)
+    }
+
     private fun generateWithFallback(fileUri: String, isLesson: Boolean): String {
         var lastError: Exception? = null
         for (m in modelsToTry()) {
@@ -371,12 +406,7 @@ class GeminiPipeline(
     companion object {
         private const val BASE = "https://generativelanguage.googleapis.com"
         private const val INLINE_MAX_BYTES = 10L * 1024 * 1024
-        val SUPPORTED_MODELS = listOf(
-            "gemini-3.1-flash-lite",
-            "gemini-3.5-flash-lite",
-            "gemini-3.5-flash",
-            "gemini-3.6-flash",
-            "gemini-3.7-flash"
-        )
+        /** 404-nél kipróbált tartalék modellek (1.1.6: frissítve; a 3.5-flash és 3.7-flash kivezetve). */
+        val SUPPORTED_MODELS = GeminiModels.FALLBACK
     }
 }

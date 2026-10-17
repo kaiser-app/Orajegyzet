@@ -96,7 +96,8 @@ data class AppSettings(
     val preferGemini: Boolean = false,      // alap elemző: false = Gemma 4 helyben, true = Gemini (1.1)
     val whisperGlossary: String = "",       // szótár: nevek, szakszavak a Whispernek (1.1.4)
     val whisperAccurate: Boolean = false,   // pontosabb átírás: beam search (1.1.4)
-    val whisperModelName: String = ""       // az importált Whisper-fájl eredeti neve (1.1.4)
+    val whisperModelName: String = "",      // az importált Whisper-fájl eredeti neve (1.1.4)
+    val geminiModelsCache: String = ""      // a kulccsal lekért Gemini-modellek, vesszővel (1.1.6)
 )
 
 private val Context.ds by preferencesDataStore("settings")
@@ -129,6 +130,7 @@ object Settings {
     private val WHISPER_GLOSSARY = stringPreferencesKey("whisper_glossary")
     private val WHISPER_ACCURATE = booleanPreferencesKey("whisper_accurate")
     private val WHISPER_MODEL_NAME = stringPreferencesKey("whisper_model_name")
+    private val GEMINI_MODELS_CACHE = stringPreferencesKey("gemini_models_cache")
 
     suspend fun migrateSecretsIfNeeded(ctx: Context) {
         try {
@@ -183,7 +185,8 @@ object Settings {
             preferGemini = p[PREFER_GEMINI] ?: false,
             whisperGlossary = p[WHISPER_GLOSSARY] ?: "",
             whisperAccurate = p[WHISPER_ACCURATE] ?: false,
-            whisperModelName = p[WHISPER_MODEL_NAME] ?: ""
+            whisperModelName = p[WHISPER_MODEL_NAME] ?: "",
+            geminiModelsCache = p[GEMINI_MODELS_CACHE] ?: ""
         )
     }
 
@@ -192,6 +195,11 @@ object Settings {
     /** Csak a Gemma-modell eredeti nevét írja (a titkos mezőkhöz nem nyúl). */
     suspend fun setGemmaModelName(ctx: Context, name: String) {
         ctx.ds.edit { p -> p[GEMMA_MODEL_NAME] = name }
+    }
+
+    /** A lekért Gemini-modellek listája (a többi beállításhoz nem nyúl). */
+    suspend fun setGeminiModelsCache(ctx: Context, value: String) {
+        ctx.ds.edit { p -> p[GEMINI_MODELS_CACHE] = value }
     }
 
     /** Csak a Whisper-modell eredeti nevét írja (importkor). */

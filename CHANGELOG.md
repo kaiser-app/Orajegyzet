@@ -1,5 +1,12 @@
 # Változási Napló (Changelog) – AssiSten-s (korábban Fülelő Hangjegyzet)
 
+## 1.1.6 (versionCode 13) – Gemini-modellek lekérése a kulcsoddal
+
+- **Hiba volt:** a Gemini-modellválasztó egy beégetett, 5 elemű listát mutatott, amelyből a `gemini-3.5-flash` és a `gemini-3.7-flash` 2026. október 8-án kivezetésre került.
+- Új **„🔄 Frissítés”** gomb (Beállítások → Online (Gemini)): az app a saját API-kulcsoddal lekéri az összes elérhető modellt (ListModels), és a jegyzetkészítésre alkalmasakat mutatja (a TTS, kép, élő, beágyazó stb. modellek kiszűrve). A lista megmarad a következő indításra.
+- A választó rádiógombos lista lett, rövid megjegyzéssel (gyors/olcsó, kiegyensúlyozott, legerősebb); a jelenleg kiválasztott modell akkor is látszik, ha már nincs a listán.
+- Frissített beépített tartaléklista (`GeminiModels.FALLBACK`): 3.1-flash-lite, 3.5-flash-lite, 3.6-flash, 3.8-flash, flash-latest, 3.1-pro-preview. Ezt használja a 404-es tartalékváltás is.
+
 ## 1.1.5 (versionCode 12) – Mentett AI-jelentések és havi összefoglaló
 
 - **Hiba volt:** a projektjelentések (Vezetői, Státusz, QA) és a jegyzetek típusos összefoglalói (Vezetői, Jegyzőkönyv, Teendők, Részletes) csak a képernyőn látszottak, bezáráskor elvesztek.

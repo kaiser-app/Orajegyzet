@@ -191,6 +191,8 @@ fun SettingsScreen(onBack: () -> Unit) {
     var expProc by remember { mutableStateOf(true) }
     var expPerf by remember { mutableStateOf(false) }
     var expOnline by remember { mutableStateOf(false) }
+    var geminiListBusy by remember { mutableStateOf(false) }
+    var geminiListMsg by remember { mutableStateOf<String?>(null) }
     var expEmail by remember { mutableStateOf(false) }
     var expModels by remember { mutableStateOf(false) }
 
@@ -447,15 +449,51 @@ fun SettingsScreen(onBack: () -> Unit) {
                         )
                     }
                     Spacer(Modifier.height(4.dp))
-                    Text("Gemini Modell kiválasztása:", fontSize = 12.sp, fontWeight = FontWeight.Medium)
-                    LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        GeminiPipeline.SUPPORTED_MODELS.forEach { m ->
-                            item {
-                                FilterChip(
-                                    selected = s.geminiModel == m,
-                                    onClick = { s = s.copy(geminiModel = m) },
-                                    label = { Text(m, maxLines = 1) }
-                                )
+                    // 1.1.6: a kulccsal ténylegesen elérhető modellek (lekérés), különben a beépített lista
+                    val pickerModels = hu.orajegyzet.ai.GeminiModels.forPicker(
+                        hu.orajegyzet.ai.GeminiModels.decode(s.geminiModelsCache), s.geminiModel)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Gemini modell (${pickerModels.size}):", fontSize = 12.sp, fontWeight = FontWeight.Medium,
+                            modifier = Modifier.weight(1f))
+                        TextButton(
+                            enabled = s.geminiApiKey.isNotBlank() && !geminiListBusy,
+                            onClick = {
+                                geminiListBusy = true; geminiListMsg = null
+                                val key = s.geminiApiKey
+                                scope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                                    runCatching { GeminiPipeline(key).listModels() }
+                                        .onSuccess { ids ->
+                                            if (ids.isEmpty()) {
+                                                geminiListMsg = "❌ A kulccsal nem érhető el jegyzetkészítésre alkalmas modell."
+                                            } else {
+                                                val enc = hu.orajegyzet.ai.GeminiModels.encode(ids)
+                                                Settings.setGeminiModelsCache(ctx, enc)
+                                                s = s.copy(geminiModelsCache = enc)
+                                                geminiListMsg = "✅ ${ids.size} modell elérhető a kulcsoddal."
+                                            }
+                                        }
+                                        .onFailure { e -> geminiListMsg = "❌ ${e.message ?: "A lekérés nem sikerült."}" }
+                                    geminiListBusy = false
+                                }
+                            }
+                        ) { Text(if (geminiListBusy) "Lekérés…" else "🔄 Frissítés", fontSize = 12.sp) }
+                    }
+                    geminiListMsg?.let { Text(it, fontSize = 12.sp) }
+                    if (s.geminiModelsCache.isBlank()) {
+                        Text("Beépített lista látszik. A „Frissítés” a kulcsoddal lekéri az összes elérhető modellt.",
+                            fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    pickerModels.forEach { m ->
+                        Row(
+                            Modifier.fillMaxWidth().clickable { s = s.copy(geminiModel = m) },
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            RadioButton(selected = s.geminiModel == m, onClick = { s = s.copy(geminiModel = m) })
+                            Column {
+                                Text(m, fontSize = 14.sp)
+                                hu.orajegyzet.ai.GeminiModels.hint(m).takeIf { it.isNotBlank() }?.let {
+                                    Text(it, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
                             }
                         }
                     }

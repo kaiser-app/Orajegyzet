@@ -369,3 +369,39 @@ class MonthlyReportTest {
     @Test fun monthlyPromptHasStructure() =
         assertTrue(ReportBuilder.prompt(ReportBuilder.MONTHLY, "x").contains("Teendők a következő hónapra"))
 }
+
+/** 1.1.6: Gemini-modellek szűrése, rendezése, választólista. */
+class GeminiModelsTest {
+    private fun e(id: String, vararg m: String) = GeminiModels.Entry(id, methods = m.toList())
+
+    @Test fun filtersToNoteCapableModels() {
+        val list = GeminiModels.usable(listOf(
+            e("gemini-3.8-flash", "generateContent"),
+            e("gemini-3.5-flash-lite", "generateContent", "countTokens"),
+            e("gemini-3.8-flash-tts", "generateContent"),
+            e("gemini-3.1-flash-image", "generateContent"),
+            e("gemini-embedding-2", "embedContent"),
+            e("gemini-3.8-live", "bidiGenerateContent"),
+            e("gemma-4-31b-it", "generateContent"),
+            e("gemini-3.1-pro-preview", "generateContent")
+        ))
+        assertEquals(listOf("gemini-3.8-flash", "gemini-3.5-flash-lite", "gemini-3.1-pro-preview"), list)
+    }
+
+    @Test fun sortsNewestFirstLatestLast() {
+        val sorted = GeminiModels.sort(listOf("gemini-flash-latest", "gemini-3.1-flash-lite", "gemini-3.6-flash", "gemini-4-argon"))
+        assertEquals("gemini-4-argon", sorted.first())
+        assertEquals("gemini-flash-latest", sorted.last())
+        assertTrue(sorted.indexOf("gemini-3.6-flash") < sorted.indexOf("gemini-3.1-flash-lite"))
+    }
+
+    @Test fun pickerKeepsSelectedAndFallsBack() {
+        assertTrue(GeminiModels.forPicker(emptyList(), "gemini-3.1-flash-lite").containsAll(GeminiModels.FALLBACK))
+        assertTrue("gemini-3.7-flash" in GeminiModels.forPicker(listOf("gemini-3.8-flash"), "gemini-3.7-flash"))
+        assertFalse("gemini-3.7-flash" in GeminiModels.FALLBACK)
+        assertFalse("gemini-3.5-flash" in GeminiModels.FALLBACK)
+    }
+
+    @Test fun encodeDecodeRoundTrip() =
+        assertEquals(listOf("a", "b"), GeminiModels.decode(GeminiModels.encode(listOf("a", "b"))))
+}
