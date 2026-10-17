@@ -1,5 +1,9 @@
 # Változási Napló (Changelog) – AssiSten-s (korábban Fülelő Hangjegyzet)
 
+## 1.1.8 (versionCode 15) – Összeomlás javítása döntés / feladat törlésekor
+
+- **Hibajavítás:** a Projekt Asszisztensben egy döntés/kockázat vagy egy Gantt-feladat **törlése** összeomlást okozott (NullPointerException). A szerkesztett elem a törlés indításakor már ki volt ürítve, mire a háttérmenet futott. A törlendő elem most előre rögzítődik.
+
 ## 1.1.7 (versionCode 14) – Összecsukható Iskolai mód
 
 - A Beállításokban az Iskolai mód is összecsukható szakasz lett (alapból csukva), mint a többi; a fejléc mutatja az állapotát („Iskolai mód: be/ki”).

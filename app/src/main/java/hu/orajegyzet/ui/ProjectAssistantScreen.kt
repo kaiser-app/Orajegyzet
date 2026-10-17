@@ -927,8 +927,11 @@ fun ProjectAssistantScreen(onBack: () -> Unit, onOpenNote: (Long) -> Unit) {
                     }) { Text("Mentés") }
                     TextButton(
                         onClick = {
-                            scope.launch { db.projectEventDao().delete(editingEvent!!) }
+                            // 1.1.8: a törlendő elemet a korutin indítása ELŐTT rögzítjük – különben a
+                            // „editingEvent = null” után a korutinban null lesz (NullPointerException)
+                            val toDelete = editingEvent
                             editingEvent = null
+                            if (toDelete != null) scope.launch { db.projectEventDao().delete(toDelete) }
                         },
                         colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
                     ) { Text("Törlés") }
@@ -984,8 +987,9 @@ fun ProjectAssistantScreen(onBack: () -> Unit, onOpenNote: (Long) -> Unit) {
                     }) { Text("Mentés") }
                     TextButton(
                         onClick = {
-                            scope.launch { db.ganttTaskDao().delete(editingTask!!) }
+                            val toDelete = editingTask
                             editingTask = null
+                            if (toDelete != null) scope.launch { db.ganttTaskDao().delete(toDelete) }
                         },
                         colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
                     ) { Text("Törlés") }
