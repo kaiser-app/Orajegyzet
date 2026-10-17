@@ -190,6 +190,7 @@ fun SettingsScreen(onBack: () -> Unit) {
 
     var expProc by remember { mutableStateOf(true) }
     var expPerf by remember { mutableStateOf(false) }
+    var expSchool by remember { mutableStateOf(false) }
     var expOnline by remember { mutableStateOf(false) }
     var geminiListBusy by remember { mutableStateOf(false) }
     var geminiListMsg by remember { mutableStateOf<String?>(null) }
@@ -343,16 +344,14 @@ fun SettingsScreen(onBack: () -> Unit) {
                 }
             }
             item {
-                Card {
-                    Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text("Iskolai mód (órarend, csengetés, widget)", fontWeight = FontWeight.Medium,
-                                modifier = Modifier.weight(1f))
-                            Switch(checked = s.schoolMode, onCheckedChange = { s = s.copy(schoolMode = it) })
-                        }
-                        Text("Kikapcsolva az órarend és a csengetés rejtve van, az adatok megmaradnak.",
-                            color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
+                // 1.1.7: a többi szakaszhoz hasonlóan összecsukható; a fejléc mutatja az állapotot
+                SettingSection("Iskolai mód: " + if (s.schoolMode) "be" else "ki", expSchool, { expSchool = !expSchool }) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Iskolai mód (órarend, csengetés, widget)", modifier = Modifier.weight(1f))
+                        Switch(checked = s.schoolMode, onCheckedChange = { s = s.copy(schoolMode = it) })
                     }
+                    Text("Kikapcsolva az órarend és a csengetés rejtve van, az adatok megmaradnak.",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
                 }
             }
             item {

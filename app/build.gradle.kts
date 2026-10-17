@@ -15,8 +15,8 @@ android {
         applicationId = "hu.orajegyzet"
         minSdk = 31   // 1.1: a LiteRT-LM (Gemma 4) Android 12+ készüléket igényel
         targetSdk = 36
-        versionCode = 13
-        versionName = "1.1.6"
+        versionCode = 14
+        versionName = "1.1.7"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk { abiFilters.clear(); abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
     }

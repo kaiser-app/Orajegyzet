@@ -1,5 +1,9 @@
 # Változási Napló (Changelog) – AssiSten-s (korábban Fülelő Hangjegyzet)
 
+## 1.1.7 (versionCode 14) – Összecsukható Iskolai mód
+
+- A Beállításokban az Iskolai mód is összecsukható szakasz lett (alapból csukva), mint a többi; a fejléc mutatja az állapotát („Iskolai mód: be/ki”).
+
 ## 1.1.6 (versionCode 13) – Gemini-modellek lekérése a kulcsoddal
 
 - **Hiba volt:** a Gemini-modellválasztó egy beégetett, 5 elemű listát mutatott, amelyből a `gemini-3.5-flash` és a `gemini-3.7-flash` 2026. október 8-án kivezetésre került.
